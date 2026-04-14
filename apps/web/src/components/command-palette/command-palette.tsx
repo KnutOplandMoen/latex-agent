@@ -12,6 +12,7 @@ import {
   Type,
   Sigma,
   FileSearch,
+  Bot,
 } from 'lucide-react';
 
 interface CommandPaletteProps {
@@ -23,6 +24,7 @@ interface CommandPaletteProps {
   onToggleRightPanel: () => void;
   onInsertText?: (text: string) => void;
   onCompile?: () => void;
+  onOpenChat?: () => void;
 }
 
 const GREEK_SYMBOLS = [
@@ -70,6 +72,7 @@ export function CommandPalette({
   onToggleRightPanel,
   onInsertText,
   onCompile,
+  onOpenChat,
 }: CommandPaletteProps) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -154,6 +157,17 @@ export function CommandPalette({
             >
               <PanelRightClose size={14} className="text-purple-400 shrink-0" />
               Toggle PDF Preview
+            </Command.Item>
+            <Command.Item
+              value="ask ai assistant chat"
+              onSelect={() => {
+                onOpenChat?.();
+                onOpenChange(false);
+              }}
+              className="flex items-center gap-2 px-2 py-1.5 rounded text-sm text-[#abb2bf] cursor-pointer data-[selected=true]:bg-[#2c313a]"
+            >
+              <Bot size={14} className="text-purple-400 shrink-0" />
+              Ask AI
             </Command.Item>
             <Command.Item
               value="find in files"

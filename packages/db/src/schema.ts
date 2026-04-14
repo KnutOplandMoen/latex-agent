@@ -76,6 +76,27 @@ export const yjsUpdates = pgTable(
   (t) => [index('yjs_updates_doc_idx').on(t.documentName, t.id)],
 );
 
+export const agentSessions = pgTable(
+  'agent_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    mode: text('mode').notNull(),
+    messages: text('messages').notNull(), // JSON array of messages
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('agent_sessions_project_idx').on(t.projectId),
+    index('agent_sessions_user_idx').on(t.userId),
+  ],
+);
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   ownedProjects: many(projects),
@@ -95,4 +116,9 @@ export const projectMembersRelations = relations(projectMembers, ({ one }) => ({
 
 export const filesRelations = relations(files, ({ one }) => ({
   project: one(projects, { fields: [files.projectId], references: [projects.id] }),
+}));
+
+export const agentSessionsRelations = relations(agentSessions, ({ one }) => ({
+  project: one(projects, { fields: [agentSessions.projectId], references: [projects.id] }),
+  user: one(users, { fields: [agentSessions.userId], references: [users.id] }),
 }));

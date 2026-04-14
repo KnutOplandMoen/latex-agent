@@ -29,6 +29,21 @@ pnpm dev
 
 The frontend runs at **http://localhost:3000** and the API at **http://localhost:3001**.
 
+### AI Agent service (optional)
+
+The agent service is a separate Python FastAPI process:
+
+```bash
+# Install Python dependencies (requires Python 3.11+)
+cd apps/agent
+pip install -e ".[dev]"
+
+# Start the agent service (from apps/agent)
+uv run uvicorn main:app --host 0.0.0.0 --port 3002 --reload
+```
+
+Set `ANTHROPIC_API_KEY` in `.env` to enable AI features. The agent runs at **http://localhost:3002** (`NEXT_PUBLIC_AGENT_URL` for the browser). The compile tool calls the Fastify API using the same Clerk JWT as the chat request, so ensure the API is reachable at `API_INTERNAL_URL` (default `http://localhost:3001`).
+
 ## Auth (optional for local dev)
 
 Auth is handled by [Clerk](https://clerk.com). Without Clerk credentials the app runs in **dev bypass mode** — no login required, all requests use a built-in dev user.
@@ -46,9 +61,9 @@ NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
 apps/
   web/       Next.js 15 frontend
   api/       Fastify REST API
-  collab/    Hocuspocus Yjs server (placeholder)
-  compile/   LaTeX compile worker (placeholder)
-  agent/     Python FastAPI agent (placeholder)
+  collab/    Hocuspocus Yjs WebSocket server
+  compile/   LaTeX compile worker (BullMQ + Docker)
+  agent/     Python FastAPI AI agent service
 packages/
   shared-types/  Zod schemas shared by web + api
   db/            Drizzle ORM schema + migrations

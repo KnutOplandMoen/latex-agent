@@ -43,3 +43,19 @@ export {
   type SyncTexEntry,
   type SyncTexData,
 } from './compile.js';
+
+export {
+  AgentMode,
+  AgentMessageRole,
+  AgentMessageSchema,
+  AgentSessionSchema,
+  AgentSessionPutBodySchema,
+  AgentRunRequestSchema,
+  AgentEventType,
+  type AgentModeType,
+  type AgentMessage,
+  type AgentSession,
+  type AgentSessionPutBody,
+  type AgentRunRequest,
+  type AgentEventTypeValue,
+} from './agent.js';

@@ -5,6 +5,8 @@ import type {
   CreateProjectInputType,
   CreateFileInputType,
   CompileResult,
+  AgentSession,
+  AgentSessionPutBody,
 } from '@latex-ide/shared-types';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
@@ -100,6 +102,17 @@ export function createApiClient(getToken: GetToken) {
 
       pdfUrl: (jobId: string, projectId: string) =>
         `${BASE_URL}/compiles/${jobId}/output.pdf?projectId=${projectId}`,
+    },
+
+    agentSession: {
+      get: (projectId: string) =>
+        request<{ session: AgentSession | null }>(`/projects/${projectId}/agent-session`, getToken),
+
+      put: (projectId: string, body: AgentSessionPutBody) =>
+        request<AgentSession>(`/projects/${projectId}/agent-session`, getToken, {
+          method: 'PUT',
+          body: JSON.stringify(body),
+        }),
     },
   };
 }

@@ -15,7 +15,7 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 | Phase 2 — Backend, persistence, projects | **DONE** | Auth (Clerk + dev bypass), project CRUD, file persistence via Postgres, dashboard, API-backed editor |
 | Phase 3 — Realtime collaboration | **DONE** | Yjs + Hocuspocus + awareness, offline support, presence UI |
 | Phase 4 — LaTeX compilation | **DONE** | TeX Live Docker image, BullMQ compile worker, API compile routes, pdf.js PDF viewer, inline error diagnostics, SyncTeX forward+reverse sync |
-| Phase 5 — AI agent layer | Not started | Python FastAPI agent, tools, chat UI |
+| Phase 5 — AI agent layer | **DONE** | Python FastAPI agent, Claude agentic loop, tools (file/edit/compile/research/bib/web), chat UI with edit proposals, API-backed session persistence |
 | Phase 6 — History, diff, polish | Not started | Version history, comments, sharing, import/export |
 | Phase 7 — Hosting and launch | Not started | Deployment, observability, launch |
 
@@ -26,9 +26,9 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 - `apps/api/` — Fastify with Clerk JWT auth (dev bypass), Drizzle DB plugin, project + file CRUD routes
 - `apps/collab/` — Hocuspocus Yjs WebSocket server with Clerk auth, DB persistence, viewer read-only
 - `apps/compile/` — BullMQ compile worker with Dockerized TeX Live, log parser, SyncTeX parser
-- `apps/agent/` — Python placeholder with `pyproject.toml`
-- `packages/shared-types/` — Zod schemas for User, Project, ProjectMember, File (with content), UpdateFile, Compile (request, result, errors, SyncTeX)
-- `packages/db/` — Drizzle ORM schema (users, projects, projectMembers, files with content, yjsUpdates), migrations, client, seed script
+- `apps/agent/` — Python FastAPI AI agent service with Claude agentic loop, SSE streaming, nine tools, Clerk JWT auth, asyncpg DB access
+- `packages/shared-types/` — Zod schemas for User, Project, ProjectMember, File (with content), UpdateFile, Compile (request, result, errors, SyncTeX), Agent (session, messages, events)
+- `packages/db/` — Drizzle ORM schema (users, projects, projectMembers, files with content, yjsUpdates, agentSessions), migrations, client, seed script
 - `packages/latex-lang/` — placeholder for custom CM6 extensions
 
 **Editor (Yjs-backed, realtime collaborative):**
@@ -70,9 +70,27 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 - Clerk JWT authentication with dev bypass (gated on `NODE_ENV !== 'production'`)
 - Auto user upsert on first authenticated request (no separate webhook needed for basic usage)
 - Compile routes: `POST /projects/:id/compile` (enqueue), `GET /projects/:id/compile/:jobId` (poll status), `GET /compiles/:jobId/output.pdf` (serve PDF)
+- Agent session routes: `GET /projects/:id/agent-session` (latest session), `PUT /projects/:id/agent-session` (upsert messages)
 - Redis plugin + BullMQ compile queue plugin
 - Configurable CORS origin via `CORS_ORIGIN` env var
 - Graceful DB pool + Redis shutdown on Fastify close
+
+**AI Agent:**
+- Python FastAPI service (`apps/agent/`) with SSE streaming endpoint (`POST /agent/run`)
+- Core agentic loop: think → tool_call → observe → repeat (max 25 iterations)
+- Two modes: General (writing/editing/research) and Debug (fix compile errors)
+- Nine tools: `read_file`, `list_files`, `create_file`, `edit_file`, `search_in_files`, `compile_project`, `search_papers` (Semantic Scholar + OpenAlex), `add_to_bibliography`, `web_search` (Tavily)
+- `edit_file` with 4-layer matching fallback: exact → whitespace-normalized → indentation-flexible → fuzzy (0.85 threshold)
+- In-memory working copies: agent reads see accumulated edits within a session
+- Context management: section map parser (sections, labels, citations, environments), file tree, compile errors
+- Prompt caching: stable system prompt prefix cached via Anthropic's `cache_control`
+- Model routing: Claude Sonnet for reasoning, Haiku planned for mechanical tasks
+- Clerk JWT auth (dev bypass), project membership check via asyncpg
+- Chat panel in the IDE: right-panel tab alongside PDF, SSE streaming, tool call cards, edit proposal cards with `@codemirror/merge` diff preview, Accept/Reject buttons
+- Edit proposals applied to Yjs on Accept (including switching to the target file when needed; real-time collaboration preserved)
+- "Ask AI" in command palette + chat toggle button in top bar
+- `agent_sessions` table + Fastify `GET/PUT /projects/:id/agent-session`; chat panel loads and debounce-saves history
+- Agent `compile_project` forwards the user JWT to the Fastify compile API (required when Clerk auth is enabled)
 
 **Dashboard:**
 - `/dashboard` page with project list, create project dialog, delete project (with confirmation)
@@ -100,6 +118,11 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 - No `yjs_updates` compaction job yet — rows accumulate indefinitely (future optimization)
 - File tree is REST-based, not synced via Yjs (a project-level Y.Map could be added later)
 - Viewer read-only is enforced server-side (Hocuspocus `connection.readOnly`) but the editor UI does not visually indicate read-only mode
+- Agent service requires Python 3.11+ and `ANTHROPIC_API_KEY` — start separately: `cd apps/agent && uv run uvicorn main:app --port 3002 --reload` (or `pip install -e ".[dev]"` then `uvicorn`)
+- No Sketch+Apply two-model pipeline yet — single model produces edits directly
+- No orchestrator/delegation mode — single agent loop only
+- No embedding-based section retrieval (pgvector) for very large projects
+- Agent `create_file` writes to DB directly, not through Yjs — the file tree refreshes via API after creation
 
 ---
 

@@ -8,6 +8,7 @@ import {
   PanelGroup,
   PanelResizeHandle,
 } from 'react-resizable-panels';
+import type { Text as YText } from 'yjs';
 import type { File } from '@latex-ide/shared-types';
 import type { EditorHandle } from '@/components/editor/editor';
 import { FileTree } from './file-tree';
@@ -18,9 +19,12 @@ import { CompileLogPanel } from './compile-log-panel';
 import { PresenceIndicator } from './presence-indicator';
 import { CommandPalette } from '@/components/command-palette/command-palette';
 import { useApi } from '@/lib/use-api';
+import { useGetToken } from '@/lib/use-api';
 import { useCollabEditor } from '@/hooks/use-collab-editor';
 import { useCompile } from '@/hooks/use-compile';
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Loader2, ArrowLeft, AlertTriangle, Play } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Loader2, ArrowLeft, AlertTriangle, Play, Bot } from 'lucide-react';
+import { ChatPanel } from './chat-panel';
+import type { EditProposal } from '@/hooks/use-agent';
 
 const Editor = dynamic(
   () => import('@/components/editor/editor').then((mod) => mod.Editor),
@@ -42,6 +46,7 @@ interface IdeLayoutProps {
 
 export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutProps) {
   const api = useApi();
+  const getToken = useGetToken();
   const editorRef = useRef<EditorHandle | null>(null);
   const pdfViewerRef = useRef<PdfViewerHandle | null>(null);
   const [files, setFiles] = useState(initialFiles);
@@ -55,7 +60,9 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const [outlineContent, setOutlineContent] = useState('');
   const [showCompileLog, setShowCompileLog] = useState(false);
+  const [rightTab, setRightTab] = useState<'pdf' | 'chat'>('pdf');
   const editorKeyRef = useRef(0);
+  const pendingAgentEditRef = useRef<EditProposal | null>(null);
 
   const { ytext, provider, isConnected, isSynced, connectedUsers } =
     useCollabEditor(projectId, activeFileId);
@@ -226,6 +233,57 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
         ? 'text-yellow-400'
         : 'text-[#5c6370]';
 
+  const applyAgentEditToYtext = useCallback((proposal: EditProposal, doc: YText) => {
+    if (!doc) return;
+    const content = doc.toString();
+    const idx = content.indexOf(proposal.search);
+    if (idx === -1) return;
+    doc.delete(idx, proposal.search.length);
+    doc.insert(idx, proposal.replace);
+  }, []);
+
+  const handleAcceptEdit = useCallback(
+    (proposal: EditProposal) => {
+      if (!activeFile || activeFile.path !== proposal.file) {
+        pendingAgentEditRef.current = proposal;
+        const f = files.find((file) => file.path === proposal.file);
+        if (f) handleFileSelect(f.id);
+        return;
+      }
+      if (!ytext) {
+        pendingAgentEditRef.current = proposal;
+        return;
+      }
+      applyAgentEditToYtext(proposal, ytext);
+    },
+    [activeFile, applyAgentEditToYtext, files, handleFileSelect, ytext],
+  );
+
+  // After switching files, apply a pending AI edit once the Yjs fragment is ready
+  useEffect(() => {
+    const pending = pendingAgentEditRef.current;
+    if (!pending || !ytext || !activeFile || activeFile.path !== pending.file) return;
+    applyAgentEditToYtext(pending, ytext);
+    pendingAgentEditRef.current = null;
+  }, [activeFile, applyAgentEditToYtext, ytext]);
+
+  const handleRejectEdit = useCallback((_editId: string) => {
+    // No-op on the editor side — the hook already marks it as rejected
+  }, []);
+
+  const handleAgentFileCreated = useCallback(
+    async (path: string) => {
+      // Refresh file list from API
+      try {
+        const updatedFiles = await api.files.listByProject(projectId);
+        setFiles(updatedFiles);
+      } catch {
+        // ignore
+      }
+    },
+    [api, projectId],
+  );
+
   const fileEntries = files.map((f) => ({ id: f.id, name: f.path, type: f.type as 'tex' | 'bib' | 'image' | 'other' }));
 
   const showEditor = activeFileId && ytext && provider;
@@ -281,9 +339,21 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
             Ctrl+K
           </button>
           <button
+            onClick={() => {
+              if (!showRightPanel) setShowRightPanel(true);
+              setRightTab('chat');
+            }}
+            className={`p-1 rounded hover:bg-[#2c313a] transition-colors ${
+              showRightPanel && rightTab === 'chat' ? 'text-purple-400' : 'text-[#7f848e] hover:text-[#abb2bf]'
+            }`}
+            title="AI Chat"
+          >
+            <Bot size={16} />
+          </button>
+          <button
             onClick={() => setShowRightPanel((p) => !p)}
             className="p-1 rounded hover:bg-[#2c313a] text-[#7f848e] hover:text-[#abb2bf] transition-colors"
-            title={showRightPanel ? 'Hide PDF preview' : 'Show PDF preview'}
+            title={showRightPanel ? 'Hide right panel' : 'Show right panel'}
           >
             {showRightPanel ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
           </button>
@@ -363,21 +433,60 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
             </div>
           </Panel>
 
-          {/* Right: PDF preview + compile log */}
+          {/* Right: PDF preview / Chat + compile log */}
           {showRightPanel && (
             <>
               <PanelResizeHandle className="w-[3px] bg-[#3e4451] hover:bg-blue-500 transition-colors" />
               <Panel defaultSize={30} minSize={15} maxSize={50} id="pdf-panel">
                 <div className="h-full flex flex-col">
-                  <div className={showCompileLog ? 'flex-1 min-h-0' : 'h-full'}>
-                    <PdfViewer
-                      ref={pdfViewerRef}
-                      pdfUrl={pdfUrl}
-                      synctexData={synctex}
-                      onSynctexClick={handleSynctexClick}
-                    />
+                  {/* Tab bar for PDF / Chat */}
+                  <div className="flex items-center bg-[#21252b] border-b border-[#3e4451] px-1">
+                    <button
+                      onClick={() => setRightTab('pdf')}
+                      className={`px-3 py-1 text-xs transition-colors ${
+                        rightTab === 'pdf'
+                          ? 'text-[#abb2bf] border-b-2 border-blue-500'
+                          : 'text-[#5c6370] hover:text-[#abb2bf]'
+                      }`}
+                    >
+                      PDF
+                    </button>
+                    <button
+                      onClick={() => setRightTab('chat')}
+                      className={`flex items-center gap-1 px-3 py-1 text-xs transition-colors ${
+                        rightTab === 'chat'
+                          ? 'text-[#abb2bf] border-b-2 border-purple-500'
+                          : 'text-[#5c6370] hover:text-[#abb2bf]'
+                      }`}
+                    >
+                      <Bot size={11} />
+                      Chat
+                    </button>
                   </div>
-                  {showCompileLog && (
+
+                  {/* Tab content */}
+                  <div className={showCompileLog && rightTab === 'pdf' ? 'flex-1 min-h-0' : 'flex-1 min-h-0'}>
+                    {rightTab === 'pdf' ? (
+                      <PdfViewer
+                        ref={pdfViewerRef}
+                        pdfUrl={pdfUrl}
+                        synctexData={synctex}
+                        onSynctexClick={handleSynctexClick}
+                      />
+                    ) : (
+                      <ChatPanel
+                        projectId={projectId}
+                        getToken={getToken}
+                        openFile={activeFile?.path}
+                        compileErrors={compileErrors}
+                        onAcceptEdit={handleAcceptEdit}
+                        onRejectEdit={handleRejectEdit}
+                        onFileCreated={handleAgentFileCreated}
+                      />
+                    )}
+                  </div>
+
+                  {showCompileLog && rightTab === 'pdf' && (
                     <CompileLogPanel
                       errors={compileErrors}
                       warnings={compileWarnings}
@@ -435,6 +544,10 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
         onToggleRightPanel={() => setShowRightPanel((p) => !p)}
         onInsertText={handleInsertText}
         onCompile={compile}
+        onOpenChat={() => {
+          if (!showRightPanel) setShowRightPanel(true);
+          setRightTab('chat');
+        }}
       />
     </div>
   );

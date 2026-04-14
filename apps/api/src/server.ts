@@ -17,6 +17,7 @@ import fileByIdRoutes from './routes/files/_id.js';
 import redisPlugin from './plugins/redis.js';
 import compileQueuePlugin from './plugins/compile-queue.js';
 import compileRoutes from './routes/projects/compile.js';
+import agentSessionRoutes from './routes/projects/agent-session.js';
 import compilesRoutes from './routes/compiles/index.js';
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
@@ -54,6 +55,7 @@ async function start() {
   await fastify.register(projectFilesRoutes, { prefix: '/projects' });
   await fastify.register(fileByIdRoutes, { prefix: '/files' });
   await fastify.register(compileRoutes, { prefix: '/projects' });
+  await fastify.register(agentSessionRoutes, { prefix: '/projects' });
   await fastify.register(compilesRoutes, { prefix: '/compiles' });
 
   await fastify.listen({ port: PORT, host: HOST });

@@ -1,6 +1,6 @@
 [project]
 name = "latex-ide-agent"
-version = "0.0.1"
+version = "0.1.0"
 description = "AI agent service for the LaTeX IDE"
 requires-python = ">=3.11"
 dependencies = [
@@ -10,11 +10,16 @@ dependencies = [
     "openai",
     "sse-starlette",
     "pydantic>=2",
+    "asyncpg",
+    "httpx",
+    "PyJWT[crypto]",
+    "python-dotenv",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "pytest-asyncio",
     "httpx",
     "ruff",
 ]
