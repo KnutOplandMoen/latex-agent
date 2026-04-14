@@ -2,14 +2,15 @@ import fp from 'fastify-plugin';
 import { AppError } from '../lib/errors.js';
 
 export default fp(async (fastify) => {
-  fastify.setErrorHandler((error, req, reply) => {
+  fastify.setErrorHandler((error: Error, req, reply) => {
     if (error instanceof AppError) {
       reply.code(error.statusCode).send({ error: error.code, message: error.message });
       return;
     }
 
-    if (error.validation) {
-      reply.code(400).send({ error: 'VALIDATION_ERROR', details: error.validation });
+    const fastifyError = error as Error & { validation?: unknown };
+    if (fastifyError.validation) {
+      reply.code(400).send({ error: 'VALIDATION_ERROR', details: fastifyError.validation });
       return;
     }
 

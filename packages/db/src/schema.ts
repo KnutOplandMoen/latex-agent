@@ -4,10 +4,16 @@ import {
   text,
   timestamp,
   bigserial,
-  bytea,
+  customType,
   index,
   primaryKey,
 } from 'drizzle-orm/pg-core';
+
+const bytea = customType<{ data: Buffer }>({
+  dataType() {
+    return 'bytea';
+  },
+});
 import { relations } from 'drizzle-orm';
 
 export const users = pgTable('users', {
