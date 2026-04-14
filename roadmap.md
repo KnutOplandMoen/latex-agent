@@ -12,7 +12,7 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 |---|---|---|
 | Phase 0 — Foundation | **DONE** | Monorepo, Docker Compose, DB schema, API skeleton, shared types |
 | Phase 1 — The editor | **DONE** | CodeMirror 6 with LaTeX support, IDE layout, command palette, outline view |
-| Phase 2 — Backend, persistence, projects | Not started | Auth, project CRUD, file persistence |
+| Phase 2 — Backend, persistence, projects | **DONE** | Auth (Clerk + dev bypass), project CRUD, file persistence via Postgres, dashboard, API-backed editor |
 | Phase 3 — Realtime collaboration | Not started | Yjs + Hocuspocus + awareness |
 | Phase 4 — LaTeX compilation | Not started | TeX Live Docker, compile worker, PDF preview |
 | Phase 5 — AI agent layer | Not started | Python FastAPI agent, tools, chat UI |
@@ -22,37 +22,54 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 ### What exists today
 
 **Monorepo structure (pnpm workspaces + Turborepo):**
-- `apps/web/` — Next.js 15 + React 19 + Tailwind CSS 4
-- `apps/api/` — Fastify skeleton with health endpoint, auth stub, error handler, DB plugin
+- `apps/web/` — Next.js 15 + React 19 + Tailwind CSS 4 + Clerk auth
+- `apps/api/` — Fastify with Clerk JWT auth (dev bypass), Drizzle DB plugin, project + file CRUD routes
 - `apps/collab/` — placeholder
 - `apps/compile/` — placeholder
 - `apps/agent/` — Python placeholder with `pyproject.toml`
-- `packages/shared-types/` — Zod schemas for User, Project, ProjectMember, File
-- `packages/db/` — Drizzle ORM schema (users, projects, projectMembers, files, yjsUpdates), client, seed script
+- `packages/shared-types/` — Zod schemas for User, Project, ProjectMember, File (with content), UpdateFile
+- `packages/db/` — Drizzle ORM schema (users, projects, projectMembers, files with content, yjsUpdates), migrations, client, seed script
 - `packages/latex-lang/` — placeholder for custom CM6 extensions
 
-**Editor (fully functional, in-memory only):**
+**Editor (API-backed):**
 - CodeMirror 6 wrapped in a React component (mount-once pattern, `next/dynamic` with `ssr: false`)
 - `codemirror-lang-latex` with auto-close tags, linting, tooltips, autocomplete, bracket matching
 - One Dark theme, JetBrains Mono font
 - Three-pane resizable layout (`react-resizable-panels`): file tree + outline | editor with tabs | PDF placeholder
 - Outline view parsing `\section` / `\subsection` hierarchy from document content
 - Command palette (`cmdk`) on Ctrl+K with file switching, toggle panels, symbol/operator insertion
-- Sample LaTeX document loaded on page load
+- Files loaded from Postgres via API, debounced auto-save (2s) on edit
+- Lazy file content loading — only fetches content when a file is opened
+- New file creation from the file tree
+
+**Backend:**
+- Fastify API with `fastify-type-provider-zod` for end-to-end typed routes
+- Project CRUD: `POST/GET /projects`, `GET/DELETE /projects/:id`
+- File CRUD: `GET/POST /projects/:id/files`, `GET/PUT/DELETE /files/:id`
+- Service layer pattern: routes → services → Drizzle, with project membership checks
+- Clerk JWT authentication with dev bypass (no credentials needed for local dev)
+
+**Dashboard:**
+- `/dashboard` page with project list, create project dialog, delete project
+- `/project/[id]` page loads real project files and opens the editor
+- `/` redirects to `/dashboard`
 
 **Infrastructure:**
 - `docker/docker-compose.yml` with PostgreSQL 16 + Redis 7
 - `.env.example` with all expected environment variables
 - `DECISIONS.md` with locked-in stack choices
 - Root configs: `tsconfig.base.json` (strict), `.prettierrc`, `turbo.json`
+- Drizzle migrations generated in `packages/db/migrations/`
 
 ### Known issues / next steps
 
-- Editor is in-memory only — no file persistence yet (Phase 2)
-- Auth is stubbed — Clerk not wired up yet (Phase 2)
-- DB migrations not generated yet — run `drizzle-kit generate` after `docker compose up` (Phase 2)
 - No compile functionality — PDF pane is a placeholder (Phase 4)
 - Command palette symbol insertion doesn't actually insert into the editor yet (needs editor ref forwarding)
+- Clerk auth requires credentials from clerk.com — set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` to enable; without them, dev bypass is active
+- Run `docker compose up` then `pnpm --filter @latex-ide/db db:migrate` then `pnpm --filter @latex-ide/db db:seed` to set up the database
+- No user sync from Clerk to the `users` table yet — in dev mode the seed script creates a `dev_user`; for production, add a Clerk webhook to sync users
+- File deletion is not exposed in the UI yet (API supports it)
+- No error boundaries in the editor page
 
 ---
 
@@ -198,7 +215,7 @@ Cmd+K opens a fuzzy-search command palette (insert symbol, switch file, run comp
 
 ---
 
-## Phase 2 — Backend, persistence, projects (Weeks 4–5) ⬜ UP NEXT
+## Phase 2 — Backend, persistence, projects (Weeks 4–5) ✅ DONE
 
 Goal: real users can sign up, create projects, save files, come back later.
 
@@ -247,7 +264,7 @@ For the MVP, store `.tex` content **directly in Postgres** (a `text` column). It
 
 For the **compiled PDFs and uploaded images**, use Cloudflare R2 from day one — they're binary and possibly large.
 
-**Definition of done for Phase 2:** You can sign up, create a project, add `.tex` files, edit them, save, refresh the browser, and your changes are still there. Single-user only.
+**Definition of done for Phase 2:** You can sign up, create a project, add `.tex` files, edit them, save, refresh the browser, and your changes are still there. Single-user only. ✅
 
 ---
 

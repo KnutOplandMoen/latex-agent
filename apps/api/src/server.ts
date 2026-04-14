@@ -6,6 +6,11 @@ import {
 } from 'fastify-type-provider-zod';
 import errorHandler from './plugins/error-handler.js';
 import auth from './plugins/auth.js';
+import dbPlugin from './plugins/db.js';
+import projectsRoutes from './routes/projects/index.js';
+import projectByIdRoutes from './routes/projects/_id.js';
+import projectFilesRoutes from './routes/projects/files.js';
+import fileByIdRoutes from './routes/files/_id.js';
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -25,11 +30,17 @@ async function start() {
 
   await fastify.register(cors, { origin: true });
   await fastify.register(errorHandler);
+  await fastify.register(dbPlugin);
   await fastify.register(auth);
 
   fastify.get('/health', async () => {
     return { status: 'ok', timestamp: new Date().toISOString() };
   });
+
+  await fastify.register(projectsRoutes, { prefix: '/projects' });
+  await fastify.register(projectByIdRoutes, { prefix: '/projects' });
+  await fastify.register(projectFilesRoutes, { prefix: '/projects' });
+  await fastify.register(fileByIdRoutes, { prefix: '/files' });
 
   await fastify.listen({ port: PORT, host: HOST });
   fastify.log.info(`API server running on http://${HOST}:${PORT}`);

@@ -58,7 +58,9 @@ export const files = pgTable(
       .references(() => projects.id, { onDelete: 'cascade' }),
     path: text('path').notNull(),
     type: text('type', { enum: ['tex', 'bib', 'image', 'other'] }).notNull(),
+    content: text('content'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('files_project_path_idx').on(t.projectId, t.path)],
 );

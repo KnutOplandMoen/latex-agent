@@ -19,8 +19,12 @@ export {
 export {
   FileType,
   FileSchema,
+  FileWithContentSchema,
   CreateFileInput,
+  UpdateFileInput,
   type FileTypeValue,
   type File,
+  type FileWithContent,
   type CreateFileInputType,
+  type UpdateFileInputType,
 } from './file.js';

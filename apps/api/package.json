@@ -10,9 +10,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@clerk/backend": "^3.2.9",
     "@fastify/cors": "^10.0.0",
     "@latex-ide/db": "workspace:*",
     "@latex-ide/shared-types": "workspace:*",
+    "drizzle-orm": "^0.38.0",
     "fastify": "^5.2.0",
     "fastify-plugin": "^5.0.0",
     "fastify-type-provider-zod": "^4.0.0",

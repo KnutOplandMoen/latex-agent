@@ -1,5 +1,5 @@
-import { IdeLayout } from '@/components/ide/ide-layout';
+import { redirect } from 'next/navigation';
 
 export default function Home() {
-  return <IdeLayout />;
+  redirect('/dashboard');
 }
