@@ -268,7 +268,7 @@ For the **compiled PDFs and uploaded images**, use Cloudflare R2 from day one �
 
 ---
 
-## Phase 3 — Realtime collaboration (Weeks 6–8)
+## Phase 3 — Realtime collaboration (Weeks 6–8) ⬜ UP NEXT
 
 This is the hardest part. Take your time.
 
