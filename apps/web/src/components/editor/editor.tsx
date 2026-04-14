@@ -224,10 +224,14 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       extensions: getExtensions(),
     };
 
-    // In plain-text mode, set initial doc content.
-    // In collab mode, yCollab syncs the doc from the Y.Text.
+    // In plain-text mode, use the provided initial content.
+    // In collab mode, initialise from the current Y.Text so CodeMirror is not
+    // blank on first load. yCollab only observes *future* changes — it does not
+    // seed the initial document from Y.Text (see y-codemirror.next README).
     if (props.mode !== 'collab') {
       stateConfig.doc = props.initialDoc ?? '';
+    } else {
+      stateConfig.doc = props.ytext.toString();
     }
 
     const state = EditorState.create(stateConfig);

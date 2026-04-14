@@ -22,6 +22,7 @@ export interface CollabEditorState {
   isConnected: boolean;
   isSynced: boolean;
   connectedUsers: AwarenessUser[];
+  mountKey: number;
 }
 
 export function useCollabEditor(
@@ -33,6 +34,7 @@ export function useCollabEditor(
   const [connectedUsers, setConnectedUsers] = useState<AwarenessUser[]>([]);
   const [ytext, setYtext] = useState<Y.Text | null>(null);
   const [provider, setProvider] = useState<HocuspocusProvider | null>(null);
+  const [mountKey, setMountKey] = useState(0);
 
   const ydocRef = useRef<Y.Doc | null>(null);
   const providerRef = useRef<HocuspocusProvider | null>(null);
@@ -125,6 +127,7 @@ export function useCollabEditor(
     let idbReady = false;
     let hocuspocusSynced = false;
     let offlineTimer: ReturnType<typeof setTimeout> | null = null;
+    let offlineTimerFired = false;
 
     const tryMount = () => {
       if (!destroyed && idbReady && (hocuspocusSynced || offlineTimer === null)) {
@@ -140,6 +143,7 @@ export function useCollabEditor(
       } else {
         // Start the offline fallback timer now that IDB is ready.
         offlineTimer = setTimeout(() => {
+          offlineTimerFired = true;
           offlineTimer = null; // signals tryMount that the timer fired
           tryMount();
         }, 5000);
@@ -153,6 +157,11 @@ export function useCollabEditor(
         if (offlineTimer !== null) {
           clearTimeout(offlineTimer);
           offlineTimer = null;
+        }
+        if (offlineTimerFired) {
+          // The offline fallback already mounted the editor with potentially empty content.
+          // Force a remount now that Hocuspocus has actual server content.
+          setMountKey((k) => k + 1);
         }
         tryMount();
       }
@@ -179,5 +188,5 @@ export function useCollabEditor(
     };
   }, [projectId, fileId, getToken, userName, userId]);
 
-  return { ytext, provider, isConnected, isSynced, connectedUsers };
+  return { ytext, provider, isConnected, isSynced, connectedUsers, mountKey };
 }

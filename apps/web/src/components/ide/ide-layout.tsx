@@ -74,7 +74,7 @@ export function IdeLayout({ projectId, projectName, initialFiles, currentUserId 
   const editorKeyRef = useRef(0);
   const pendingAgentEditRef = useRef<EditProposal | null>(null);
 
-  const { ytext, provider, isConnected, isSynced, connectedUsers } =
+  const { ytext, provider, isConnected, isSynced, connectedUsers, mountKey } =
     useCollabEditor(projectId, activeFileId);
 
   const { compile, phase, pdfUrl, errors: compileErrors, warnings: compileWarnings, log: compileLog, synctex, isCompiling } =
@@ -465,7 +465,7 @@ export function IdeLayout({ projectId, projectName, initialFiles, currentUserId 
                   {showEditor ? (
                     <Editor
                       ref={editorRef}
-                      key={`${activeFileId}-${editorKeyRef.current}`}
+                      key={`${activeFileId}-${editorKeyRef.current}-${mountKey}`}
                       mode="collab"
                       ytext={ytext}
                       awareness={provider.awareness!}

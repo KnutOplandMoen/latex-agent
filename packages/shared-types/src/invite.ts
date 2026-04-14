@@ -27,7 +27,7 @@ export const ProjectMemberWithUserSchema = z.object({
   userId: z.string(),
   role: ProjectMemberRole,
   addedAt: z.string().datetime(),
-  email: z.string().email().nullable(),
+  email: z.string().nullable(),
   name: z.string().nullable(),
 });
 

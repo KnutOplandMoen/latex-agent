@@ -14,6 +14,9 @@ import type { Comment } from '@latex-ide/shared-types';
 // Effect to update the comment list
 export const setComments = StateEffect.define<{ pos: number; comment: Comment }[]>();
 
+// Effect to wire in the click handler
+const setClickHandler = StateEffect.define<(commentId: string) => void>();
+
 class CommentWidget extends WidgetType {
   constructor(private readonly count: number, private readonly onClick: () => void) {
     super();
@@ -57,6 +60,10 @@ export const commentMarkersField = StateField.define<{
     markers = markers.map((m) => ({ ...m, pos: tr.changes.mapPos(m.pos) }));
 
     for (const effect of tr.effects) {
+      if (effect.is(setClickHandler)) {
+        onClickComment = effect.value;
+      }
+
       if (effect.is(setComments)) {
         markers = effect.value;
         // Group by line to count markers per line
@@ -104,12 +111,10 @@ export function commentGutterExtension(onClickComment: (commentId: string) => vo
   return [
     commentMarkersField,
     commentGutterTheme,
-    // Store the click handler in the state (a bit hacky but avoids external state)
     EditorView.updateListener.of((update) => {
       const field = update.state.field(commentMarkersField);
       if (field.onClickComment !== onClickComment) {
-        // Patch via a transaction — this is intentional: we need a mutable ref in the field
-        // In practice the handler reference is stable (useCallback), so this only runs once
+        update.view.dispatch({ effects: setClickHandler.of(onClickComment) });
       }
     }),
   ];
