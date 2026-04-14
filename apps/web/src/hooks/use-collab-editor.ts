@@ -82,9 +82,7 @@ export function useCollabEditor(
         setIsConnected(false);
         setIsSynced(false);
       },
-      onSynced() {
-        setIsSynced(true);
-      },
+      // isSynced is set in handleSynced below, which also coordinates editor mount
     });
     providerRef.current = hocuspocus;
 
@@ -116,19 +114,56 @@ export function useCollabEditor(
     setIsSynced(false);
     setIsConnected(false);
 
-    // Wait for IndexedDB to load persisted content before mounting the editor.
-    // Without this, the editor mounts with an empty Y.Text and yCollab misses
-    // the IDB update, leaving the editor blank even though content exists.
+    // Mount the editor only after BOTH IndexedDB and Hocuspocus have synced.
+    // This prevents the blank-editor bug where IDB resolves immediately (empty)
+    // while Hocuspocus is still fetching server content, causing CodeMirror to
+    // initialise with an empty Y.Text that yCollab never re-initialises.
+    //
+    // Offline fallback: if Hocuspocus hasn't synced within 5 seconds (e.g. the
+    // collab server is down), mount anyway with whatever IDB has.
     let destroyed = false;
-    idb.whenSynced.then(() => {
-      if (!destroyed) {
+    let idbReady = false;
+    let hocuspocusSynced = false;
+    let offlineTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const tryMount = () => {
+      if (!destroyed && idbReady && (hocuspocusSynced || offlineTimer === null)) {
         setYtext(ydoc.getText('content'));
         setProvider(hocuspocus);
       }
+    };
+
+    idb.whenSynced.then(() => {
+      idbReady = true;
+      if (hocuspocusSynced) {
+        tryMount();
+      } else {
+        // Start the offline fallback timer now that IDB is ready.
+        offlineTimer = setTimeout(() => {
+          offlineTimer = null; // signals tryMount that the timer fired
+          tryMount();
+        }, 5000);
+      }
     });
+
+    const handleSynced = () => {
+      if (!hocuspocusSynced) {
+        hocuspocusSynced = true;
+        setIsSynced(true);
+        if (offlineTimer !== null) {
+          clearTimeout(offlineTimer);
+          offlineTimer = null;
+        }
+        tryMount();
+      }
+    };
+
+    hocuspocus.on('synced', handleSynced);
 
     return () => {
       destroyed = true;
+      if (offlineTimer !== null) clearTimeout(offlineTimer);
+      hocuspocus.off('synced', handleSynced);
       hocuspocus.awareness?.off('change', updateUsers);
       hocuspocus.destroy();
       idb.destroy();

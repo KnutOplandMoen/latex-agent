@@ -29,12 +29,13 @@ const projectsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   });
 };
 
-function serializeProject(row: { id: string; ownerId: string; name: string; rootFile: string; createdAt: Date; updatedAt: Date }) {
+function serializeProject(row: { id: string; ownerId: string; name: string; rootFile: string; lastCompiledJobId?: string | null; createdAt: Date; updatedAt: Date }) {
   return {
     id: row.id,
     ownerId: row.ownerId,
     name: row.name,
     rootFile: row.rootFile,
+    lastCompiledJobId: row.lastCompiledJobId ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

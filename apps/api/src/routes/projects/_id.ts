@@ -19,6 +19,7 @@ const projectByIdRoutes: FastifyPluginAsyncZod = async (fastify) => {
         ownerId: project.ownerId,
         name: project.name,
         rootFile: project.rootFile,
+        lastCompiledJobId: project.lastCompiledJobId ?? null,
         createdAt: project.createdAt.toISOString(),
         updatedAt: project.updatedAt.toISOString(),
       };

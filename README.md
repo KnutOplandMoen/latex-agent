@@ -59,7 +59,7 @@ cd apps/web && pnpm dev
 
 Open **http://localhost:3000**.
 
-> **Port conflict?** If `pnpm dev` in `apps/web` prints `EADDRINUSE`, a stale Next.js process is holding port 3000. Find it with `netstat -ano | grep :3000` and kill it, then retry.
+> **Port conflict?** If `pnpm dev` in `apps/web` prints `EADDRINUSE`, a stale Next.js process is holding port 3000. Find it with `netstat -ano | grep :3000` and kill it, then retry. or netstat -ano | findstr :3001 then taskkill /PID 69876 /F
 
 ---
 

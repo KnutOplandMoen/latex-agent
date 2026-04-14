@@ -59,3 +59,37 @@ export {
   type AgentRunRequest,
   type AgentEventTypeValue,
 } from './agent.js';
+
+export {
+  SnapshotSchema,
+  CreateSnapshotInput,
+  type Snapshot,
+  type CreateSnapshotInputType,
+} from './snapshot.js';
+
+export {
+  CommentSchema,
+  CreateCommentInput,
+  UpdateCommentInput,
+  type Comment,
+  type CreateCommentInputType,
+  type UpdateCommentInputType,
+} from './comment.js';
+
+export {
+  InviteSchema,
+  CreateInviteInput,
+  ProjectMemberWithUserSchema,
+  type Invite,
+  type CreateInviteInputType,
+  type ProjectMemberWithUser,
+} from './invite.js';
+
+export {
+  TemplateFileSchema,
+  TemplateSchema,
+  CreateProjectFromTemplateInput,
+  type TemplateFile,
+  type Template,
+  type CreateProjectFromTemplateInputType,
+} from './template.js';

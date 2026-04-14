@@ -7,6 +7,8 @@ import { FileText, Trash2, Loader2 } from 'lucide-react';
 import type { Project } from '@latex-ide/shared-types';
 import { useApi } from '@/lib/use-api';
 import { NewProjectDialog } from './new-project-dialog';
+import { ImportProjectDialog } from './import-project-dialog';
+import { TemplatesGallery } from './templates-gallery';
 
 export function ProjectList() {
   const api = useApi();
@@ -60,14 +62,21 @@ export function ProjectList() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-8">
+      {/* Templates gallery */}
+      <TemplatesGallery api={api} onProjectCreated={(id) => router.push(`/project/${id}`)} />
+
+      {/* Project list header */}
+      <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-[#abb2bf]">Your Projects</h1>
           <p className="text-sm text-[#5c6370] mt-1">
             {projects.length} {projects.length === 1 ? 'project' : 'projects'}
           </p>
         </div>
-        <NewProjectDialog onCreateProject={handleCreate} />
+        <div className="flex items-center gap-2">
+          <ImportProjectDialog api={api} onImported={(id) => router.push(`/project/${id}`)} />
+          <NewProjectDialog onCreateProject={handleCreate} />
+        </div>
       </div>
 
       {error && (

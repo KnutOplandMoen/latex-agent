@@ -43,6 +43,8 @@ export function createCompileService(db: Database, compileQueue: Queue) {
       const state = await job.getState();
 
       if (state === 'completed') {
+        // Persist so the frontend can reload the PDF on next visit.
+        await db.update(projects).set({ lastCompiledJobId: jobId }).where(eq(projects.id, projectId));
         return { jobId, status: 'completed' as const, ...job.returnvalue };
       }
 

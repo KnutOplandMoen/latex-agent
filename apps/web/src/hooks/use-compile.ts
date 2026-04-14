@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import type { CompileError, SyncTexData } from '@latex-ide/shared-types';
 import type { ApiClient } from '@/lib/api';
 
@@ -20,7 +20,7 @@ export interface CompileState {
 const POLL_INTERVAL_MS = 1000;
 const MAX_POLLS = 120;
 
-export function useCompile(projectId: string, api: ApiClient): CompileState {
+export function useCompile(projectId: string, api: ApiClient, initialJobId?: string | null): CompileState {
   const [phase, setPhase] = useState<CompilePhase>('idle');
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [errors, setErrors] = useState<CompileError[]>([]);
@@ -29,6 +29,18 @@ export function useCompile(projectId: string, api: ApiClient): CompileState {
   const [synctex, setSynctex] = useState<SyncTexData | null>(null);
   const pollingRef = useRef(false);
   const prevBlobUrl = useRef<string | null>(null);
+
+  // On mount, try to load the PDF from the last successful compile.
+  useEffect(() => {
+    if (!initialJobId) return;
+    api.compile.fetchPdf(initialJobId, projectId).then((url) => {
+      prevBlobUrl.current = url;
+      setPdfUrl(url);
+    }).catch(() => {
+      // PDF no longer on disk — silently ignore; user can recompile.
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const compile = useCallback(async () => {
     if (pollingRef.current) return;

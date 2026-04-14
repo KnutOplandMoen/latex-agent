@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ADD COLUMN "last_compiled_job_id" text;

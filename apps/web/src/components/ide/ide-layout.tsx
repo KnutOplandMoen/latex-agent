@@ -18,11 +18,17 @@ import { PdfViewer, type PdfViewerHandle } from './pdf-viewer';
 import { CompileLogPanel } from './compile-log-panel';
 import { PresenceIndicator } from './presence-indicator';
 import { CommandPalette } from '@/components/command-palette/command-palette';
+import { ShareDialog } from './share-dialog';
+import { HistoryPanel } from './history-panel';
+import { CommentsSidebar } from './comments-sidebar';
 import { useApi } from '@/lib/use-api';
 import { useGetToken } from '@/lib/use-api';
 import { useCollabEditor } from '@/hooks/use-collab-editor';
 import { useCompile } from '@/hooks/use-compile';
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Loader2, ArrowLeft, AlertTriangle, Play, Bot } from 'lucide-react';
+import {
+  PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen,
+  Loader2, ArrowLeft, AlertTriangle, Play, Bot, History, MessageSquare, Download,
+} from 'lucide-react';
 import { ChatPanel } from './chat-panel';
 import type { EditProposal } from '@/hooks/use-agent';
 
@@ -42,9 +48,10 @@ interface IdeLayoutProps {
   projectId: string;
   projectName: string;
   initialFiles: File[];
+  currentUserId: string;
 }
 
-export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutProps) {
+export function IdeLayout({ projectId, projectName, initialFiles, currentUserId }: IdeLayoutProps) {
   const api = useApi();
   const getToken = useGetToken();
   const editorRef = useRef<EditorHandle | null>(null);
@@ -60,7 +67,10 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const [outlineContent, setOutlineContent] = useState('');
   const [showCompileLog, setShowCompileLog] = useState(false);
-  const [rightTab, setRightTab] = useState<'pdf' | 'chat'>('pdf');
+  const [rightTab, setRightTab] = useState<'pdf' | 'chat' | 'history'>('pdf');
+  const [showComments, setShowComments] = useState(false);
+  const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
+  const [currentUserRole, setCurrentUserRole] = useState<'owner' | 'editor' | 'viewer'>('editor');
   const editorKeyRef = useRef(0);
   const pendingAgentEditRef = useRef<EditProposal | null>(null);
 
@@ -71,6 +81,14 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
     useCompile(projectId, api);
 
   const canCompile = isConnected && isSynced && !isCompiling;
+
+  // Load current user's role
+  useEffect(() => {
+    api.members.list(projectId).then((members) => {
+      const me = members.find((m) => m.userId === currentUserId);
+      if (me) setCurrentUserRole(me.role as 'owner' | 'editor' | 'viewer');
+    }).catch(() => {});
+  }, [api, projectId, currentUserId]);
 
   // Observe ytext to feed the outline view
   useEffect(() => {
@@ -179,14 +197,28 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
     [files, handleFileSelect],
   );
 
-  // Ctrl+Enter / Cmd+Enter to compile
+  // Export ZIP
+  const handleExportZip = useCallback(async () => {
+    try {
+      const blob = await api.export.downloadZip(projectId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${projectName.replace(/[^a-z0-9_-]/gi, '_')}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      showError('Failed to export project.');
+    }
+  }, [api, projectId, projectName, showError]);
+
+  // Ctrl+Enter / Cmd+Enter to compile; Ctrl+Shift+S to open history
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
         e.preventDefault();
         if (canCompile) compile();
       }
-      // Ctrl+Shift+Enter: forward SyncTeX (source -> PDF)
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
         e.preventDefault();
         const line = editorRef.current?.getCursorLine();
@@ -194,10 +226,16 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
           pdfViewerRef.current.scrollToSourceLine(activeFile.path, line);
         }
       }
+      // Ctrl+Shift+S: jump to History tab
+      if (e.key === 'S' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
+        e.preventDefault();
+        if (!showRightPanel) setShowRightPanel(true);
+        setRightTab('history');
+      }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [compile, activeFile, canCompile]);
+  }, [compile, activeFile, canCompile, showRightPanel]);
 
   // Auto-show log panel when compile has errors
   useEffect(() => {
@@ -261,7 +299,6 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
     [activeFile, applyAgentEditToYtext, files, handleFileSelect, ytext],
   );
 
-  // After switching files, apply a pending AI edit once the Yjs fragment is ready
   useEffect(() => {
     const pending = pendingAgentEditRef.current;
     if (!pending || !ytext || !activeFile || activeFile.path !== pending.file) return;
@@ -269,13 +306,10 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
     pendingAgentEditRef.current = null;
   }, [activeFile, applyAgentEditToYtext, ytext]);
 
-  const handleRejectEdit = useCallback((_editId: string) => {
-    // No-op on the editor side — the hook already marks it as rejected
-  }, []);
+  const handleRejectEdit = useCallback((_editId: string) => {}, []);
 
   const handleAgentFileCreated = useCallback(
-    async (path: string) => {
-      // Refresh file list from API
+    async (_path: string) => {
       try {
         const updatedFiles = await api.files.listByProject(projectId);
         setFiles(updatedFiles);
@@ -287,12 +321,10 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
   );
 
   const fileEntries = files.map((f) => ({ id: f.id, name: f.path, type: f.type as 'tex' | 'bib' | 'image' | 'other' }));
-
   const showEditor = activeFileId && ytext && provider;
 
   return (
     <div className="ide-root h-screen w-screen flex flex-col bg-[#282c34]">
-      {/* Error toast */}
       {errorToast && (
         <div className="absolute top-12 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-red-900/90 border border-red-700 text-red-200 text-sm flex items-center gap-2 shadow-lg">
           <AlertTriangle size={14} />
@@ -322,19 +354,36 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
 
         <div className="flex items-center gap-2">
           <PresenceIndicator users={connectedUsers} />
-          <span className={`text-xs ${syncStatusClass}`}>
-            {syncStatusLabel}
-          </span>
+          <span className={`text-xs ${syncStatusClass}`}>{syncStatusLabel}</span>
+
+          <ShareDialog projectId={projectId} currentUserId={currentUserId} api={api} />
+
+          <button
+            onClick={handleExportZip}
+            className="p-1 rounded hover:bg-[#2c313a] text-[#7f848e] hover:text-[#abb2bf] transition-colors"
+            title="Export project as ZIP"
+          >
+            <Download size={14} />
+          </button>
+
+          <button
+            onClick={() => setShowComments((p) => !p)}
+            className={`p-1 rounded hover:bg-[#2c313a] transition-colors ${
+              showComments ? 'text-yellow-400' : 'text-[#7f848e] hover:text-[#abb2bf]'
+            }`}
+            title="Toggle comments"
+          >
+            <MessageSquare size={14} />
+          </button>
+
           <button
             onClick={compile}
             disabled={!canCompile}
             className="flex items-center gap-1 px-2 py-0.5 text-xs rounded bg-green-700 hover:bg-green-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             title={
-              !isConnected
-                ? 'Cannot compile while offline'
-                : !isSynced
-                  ? 'Waiting for editor to sync...'
-                  : 'Compile (Ctrl+Enter)'
+              !isConnected ? 'Cannot compile while offline'
+              : !isSynced ? 'Waiting for editor to sync...'
+              : 'Compile (Ctrl+Enter)'
             }
           >
             {isCompiling ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
@@ -347,10 +396,7 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
             Ctrl+K
           </button>
           <button
-            onClick={() => {
-              if (!showRightPanel) setShowRightPanel(true);
-              setRightTab('chat');
-            }}
+            onClick={() => { if (!showRightPanel) setShowRightPanel(true); setRightTab('chat'); }}
             className={`p-1 rounded hover:bg-[#2c313a] transition-colors ${
               showRightPanel && rightTab === 'chat' ? 'text-purple-400' : 'text-[#7f848e] hover:text-[#abb2bf]'
             }`}
@@ -368,7 +414,6 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
         </div>
       </div>
 
-      {/* Offline banner */}
       {activeFileId && !isConnected && (
         <div className="px-3 py-1 bg-red-900/60 border-b border-red-700 text-red-200 text-xs text-center">
           Offline — changes will sync when reconnected
@@ -378,7 +423,6 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
       {/* Main content */}
       <div className="flex-1 min-h-0">
         <PanelGroup direction="horizontal" autoSaveId="ide-layout">
-          {/* Left sidebar: file tree + outline */}
           {showLeftPanel && (
             <>
               <Panel defaultSize={18} minSize={12} maxSize={30} id="left-sidebar">
@@ -401,60 +445,70 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
             </>
           )}
 
-          {/* Center: editor */}
+          {/* Center: editor + comments sidebar */}
           <Panel defaultSize={showRightPanel ? 52 : 70} minSize={30} id="editor-panel">
-            <div className="h-full flex flex-col">
-              <TabBar
-                openFiles={openFileIds.map((id) => fileById(id)?.path ?? id)}
-                activeFile={activeFile?.path ?? ''}
-                onTabSelect={(path) => {
-                  const f = files.find((file) => file.path === path);
-                  if (f) {
-                    setActiveFileId(f.id);
-                    editorKeyRef.current += 1;
-                  }
-                }}
-                onTabClose={(path) => {
-                  const f = files.find((file) => file.path === path);
-                  if (f) handleTabClose(f.id);
-                }}
-              />
-              <div className="flex-1 min-h-0">
-                {showEditor ? (
-                  <Editor
-                    ref={editorRef}
-                    key={`${activeFileId}-${editorKeyRef.current}`}
-                    mode="collab"
-                    ytext={ytext}
-                    awareness={provider.awareness!}
-                  />
-                ) : activeFileId ? (
-                  <div className="h-full flex items-center justify-center bg-[#282c34] text-[#5c6370]">
-                    <Loader2 size={24} className="animate-spin" />
-                  </div>
-                ) : (
-                  <div className="h-full flex items-center justify-center bg-[#282c34] text-[#5c6370]">
-                    <span>No file open</span>
-                  </div>
-                )}
+            <div className="h-full flex">
+              <div className="flex-1 min-w-0 flex flex-col">
+                <TabBar
+                  openFiles={openFileIds.map((id) => fileById(id)?.path ?? id)}
+                  activeFile={activeFile?.path ?? ''}
+                  onTabSelect={(path) => {
+                    const f = files.find((file) => file.path === path);
+                    if (f) { setActiveFileId(f.id); editorKeyRef.current += 1; }
+                  }}
+                  onTabClose={(path) => {
+                    const f = files.find((file) => file.path === path);
+                    if (f) handleTabClose(f.id);
+                  }}
+                />
+                <div className="flex-1 min-h-0">
+                  {showEditor ? (
+                    <Editor
+                      ref={editorRef}
+                      key={`${activeFileId}-${editorKeyRef.current}`}
+                      mode="collab"
+                      ytext={ytext}
+                      awareness={provider.awareness!}
+                    />
+                  ) : activeFileId ? (
+                    <div className="h-full flex items-center justify-center bg-[#282c34] text-[#5c6370]">
+                      <Loader2 size={24} className="animate-spin" />
+                    </div>
+                  ) : (
+                    <div className="h-full flex items-center justify-center bg-[#282c34] text-[#5c6370]">
+                      <span>No file open</span>
+                    </div>
+                  )}
+                </div>
               </div>
+
+              {showComments && (
+                <div className="w-64 shrink-0 border-l border-[#3e4451] overflow-hidden">
+                  <CommentsSidebar
+                    projectId={projectId}
+                    fileId={activeFileId}
+                    currentUserId={currentUserId}
+                    isEditor={currentUserRole !== 'viewer'}
+                    api={api}
+                    highlightedCommentId={highlightedCommentId}
+                    onClose={() => setShowComments(false)}
+                  />
+                </div>
+              )}
             </div>
           </Panel>
 
-          {/* Right: PDF preview / Chat + compile log */}
+          {/* Right panel: PDF / Chat / History */}
           {showRightPanel && (
             <>
               <PanelResizeHandle className="w-[3px] bg-[#3e4451] hover:bg-blue-500 transition-colors" />
               <Panel defaultSize={30} minSize={15} maxSize={50} id="pdf-panel">
                 <div className="h-full flex flex-col">
-                  {/* Tab bar for PDF / Chat */}
                   <div className="flex items-center bg-[#21252b] border-b border-[#3e4451] px-1">
                     <button
                       onClick={() => setRightTab('pdf')}
                       className={`px-3 py-1 text-xs transition-colors ${
-                        rightTab === 'pdf'
-                          ? 'text-[#abb2bf] border-b-2 border-blue-500'
-                          : 'text-[#5c6370] hover:text-[#abb2bf]'
+                        rightTab === 'pdf' ? 'text-[#abb2bf] border-b-2 border-blue-500' : 'text-[#5c6370] hover:text-[#abb2bf]'
                       }`}
                     >
                       PDF
@@ -462,26 +516,45 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
                     <button
                       onClick={() => setRightTab('chat')}
                       className={`flex items-center gap-1 px-3 py-1 text-xs transition-colors ${
-                        rightTab === 'chat'
-                          ? 'text-[#abb2bf] border-b-2 border-purple-500'
-                          : 'text-[#5c6370] hover:text-[#abb2bf]'
+                        rightTab === 'chat' ? 'text-[#abb2bf] border-b-2 border-purple-500' : 'text-[#5c6370] hover:text-[#abb2bf]'
                       }`}
                     >
                       <Bot size={11} />
                       Chat
                     </button>
+                    <button
+                      onClick={() => setRightTab('history')}
+                      className={`flex items-center gap-1 px-3 py-1 text-xs transition-colors ${
+                        rightTab === 'history' ? 'text-[#abb2bf] border-b-2 border-orange-500' : 'text-[#5c6370] hover:text-[#abb2bf]'
+                      }`}
+                    >
+                      <History size={11} />
+                      History
+                    </button>
                   </div>
 
-                  {/* Tab content */}
-                  <div className={showCompileLog && rightTab === 'pdf' ? 'flex-1 min-h-0' : 'flex-1 min-h-0'}>
+                  <div className="flex-1 min-h-0">
                     {rightTab === 'pdf' ? (
-                      <PdfViewer
-                        ref={pdfViewerRef}
-                        pdfUrl={pdfUrl}
-                        synctexData={synctex}
-                        onSynctexClick={handleSynctexClick}
-                      />
-                    ) : (
+                      <>
+                        <div className={showCompileLog ? 'h-[60%] min-h-0' : 'h-full'}>
+                          <PdfViewer
+                            ref={pdfViewerRef}
+                            pdfUrl={pdfUrl}
+                            synctexData={synctex}
+                            onSynctexClick={handleSynctexClick}
+                          />
+                        </div>
+                        {showCompileLog && (
+                          <CompileLogPanel
+                            errors={compileErrors}
+                            warnings={compileWarnings}
+                            log={compileLog}
+                            onClose={() => setShowCompileLog(false)}
+                            onErrorClick={handleSynctexClick}
+                          />
+                        )}
+                      </>
+                    ) : rightTab === 'chat' ? (
                       <ChatPanel
                         projectId={projectId}
                         getToken={getToken}
@@ -491,18 +564,16 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
                         onRejectEdit={handleRejectEdit}
                         onFileCreated={handleAgentFileCreated}
                       />
+                    ) : (
+                      <HistoryPanel
+                        projectId={projectId}
+                        fileId={activeFileId}
+                        ytext={ytext ?? null}
+                        api={api}
+                        isOwner={currentUserRole === 'owner'}
+                      />
                     )}
                   </div>
-
-                  {showCompileLog && rightTab === 'pdf' && (
-                    <CompileLogPanel
-                      errors={compileErrors}
-                      warnings={compileWarnings}
-                      log={compileLog}
-                      onClose={() => setShowCompileLog(false)}
-                      onErrorClick={handleSynctexClick}
-                    />
-                  )}
                 </div>
               </Panel>
             </>
@@ -520,8 +591,7 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
               onClick={() => setShowCompileLog((p) => !p)}
               className={`cursor-pointer hover:underline ${
                 phase === 'compiling' ? 'text-yellow-400' :
-                phase === 'completed' ? 'text-green-400' :
-                'text-red-400'
+                phase === 'completed' ? 'text-green-400' : 'text-red-400'
               }`}
             >
               {phase === 'compiling' ? 'Compiling...' :
@@ -531,15 +601,12 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
           )}
         </div>
         <div className="flex items-center gap-3">
-          {connectedUsers.length > 0 && (
-            <span>{connectedUsers.length + 1} online</span>
-          )}
+          {connectedUsers.length > 0 && <span>{connectedUsers.length + 1} online</span>}
           <span>UTF-8</span>
           <span>LF</span>
         </div>
       </div>
 
-      {/* Command palette */}
       <CommandPalette
         open={commandPaletteOpen}
         onOpenChange={setCommandPaletteOpen}
@@ -552,10 +619,7 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
         onToggleRightPanel={() => setShowRightPanel((p) => !p)}
         onInsertText={handleInsertText}
         onCompile={canCompile ? compile : undefined}
-        onOpenChat={() => {
-          if (!showRightPanel) setShowRightPanel(true);
-          setRightTab('chat');
-        }}
+        onOpenChat={() => { if (!showRightPanel) setShowRightPanel(true); setRightTab('chat'); }}
       />
     </div>
   );

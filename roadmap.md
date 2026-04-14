@@ -16,7 +16,7 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 | Phase 3 — Realtime collaboration | **DONE** | Yjs + Hocuspocus + awareness, offline support, presence UI |
 | Phase 4 — LaTeX compilation | **DONE** | TeX Live Docker image, BullMQ compile worker, API compile routes, pdf.js PDF viewer, inline error diagnostics, SyncTeX forward+reverse sync |
 | Phase 5 — AI agent layer | **DONE** | Python FastAPI agent, Claude agentic loop, tools (file/edit/compile/research/bib/web), chat UI with edit proposals, API-backed session persistence |
-| Phase 6 — History, diff, polish | Not started | Version history, comments, sharing, import/export |
+| Phase 6 — History, diff, polish | **DONE** | Version history snapshots, inline comments, project sharing & invite flow, ZIP import/export, templates gallery |
 | Phase 7 — Hosting and launch | Not started | Deployment, observability, launch |
 
 ### What exists today
@@ -94,8 +94,34 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 
 **Dashboard:**
 - `/dashboard` page with project list, create project dialog, delete project (with confirmation)
+- Templates gallery above project list — 5 built-in templates (Article, IEEE, Beamer, Thesis, CV); click to clone into a new project
+- Import ZIP button opens a file picker; uploads `.zip` and creates a new project from the archive
 - `/project/[id]` page loads real project files and opens the editor
 - `/` redirects to `/dashboard`
+
+**Version history:**
+- "History" tab in the IDE right panel (`Ctrl+Shift+S` shortcut)
+- Save named snapshots per file; stored as full Yjs state in `project_snapshots` table
+- Diff view: `@codemirror/merge` MergeView comparing snapshot vs current content
+- Restore: replaces current Yjs text with snapshot content (propagates to all collaborators via Yjs)
+
+**Inline comments:**
+- Comments stored in `comments` table; anchored to text positions using `Y.RelativePosition` (survives concurrent edits)
+- Comment gutter in editor: CodeMirror `StateField` renders speech-bubble widgets per line
+- Comments sidebar: threaded view with replies, resolve/delete buttons, polls every 30s
+- Viewers cannot post or resolve comments
+
+**Project sharing & invite flow:**
+- Share dialog in IDE top bar: member list with role dropdowns (owner only), email invite form, copyable invite links
+- Invite tokens: `crypto.randomBytes(32).toString('hex')`, 7-day expiry, stored in `project_invites`
+- `/invites/[token]` page: on mount calls accept endpoint → redirects to project on success
+- Owner can change member roles (editor ↔ viewer) and remove members
+- All permission checks in service layer (ForbiddenError for non-members)
+
+**ZIP import/export:**
+- Export: streams ZIP of all project files via `archiver` piped to response (no memory buffering)
+- Import: multipart upload via `@fastify/multipart`; `unzipper` extracts files; path traversal protection (`path.posix.normalize`, reject `../`); 2MB per-file limit; binary files skipped
+- Import creates project + owner membership + all files in a single DB transaction
 
 **Infrastructure:**
 - `docker/docker-compose.yml` with PostgreSQL 16 + Redis 7; `docker/texlive.Dockerfile` for TeX Live image
@@ -106,6 +132,13 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 
 ### Known issues / next steps
 
+- Run `pnpm --filter @latex-ide/db db:seed-templates` to populate built-in templates after migrating to Phase 6 schema
+- Phase 6 migration: `packages/db/migrations/0003_phase6.sql` — run after `0002_*.sql`
+- Comments are not real-time pushed — sidebar polls every 30s; a Yjs broadcast channel could replace this later
+- Invite emails are not sent — the invite link is shown in the Share dialog for manual sharing; wire up a transactional email provider (Resend, Postmark) for production
+- `yjs_updates` compaction job still pending — rows accumulate indefinitely (low urgency until projects have thousands of updates)
+- ZIP import skips binary/image files >2 MB — skipped filenames returned in API response but not yet surfaced in the UI
+- Viewer read-only indicator in editor UI not yet implemented (enforced server-side)
 - Clerk auth requires credentials from clerk.com — set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` to enable; without them, dev bypass is active (blocked in production via `NODE_ENV`)
 - Run `docker compose up` then `pnpm --filter @latex-ide/db db:migrate` then `pnpm --filter @latex-ide/db db:seed` to set up the database
 - Build the TeX Live Docker image before first compile: `pnpm docker:build:texlive` (~2.3 GB, takes a while)
@@ -624,7 +657,7 @@ This is Cursor's "Shadow Workspace" idea. It catches the common failure mode of 
 
 ---
 
-## Phase 6 — History, diff, polish (Weeks 17–19)
+## Phase 6 — History, diff, polish (Weeks 17–19) ✅ DONE
 
 The features that turn an MVP into something people will actually use.
 

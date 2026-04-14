@@ -4,12 +4,25 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import type { Project, File } from '@latex-ide/shared-types';
-import { useApi } from '@/lib/use-api';
+import { useApi, useGetToken } from '@/lib/use-api';
+import { useAuth } from '@clerk/nextjs';
 import { IdeLayout } from '@/components/ide/ide-layout';
+
+const clerkEnabled = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
+function useCurrentUserId(): string {
+  if (clerkEnabled) {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const { userId } = useAuth();
+    return userId ?? 'dev_user';
+  }
+  return 'dev_user';
+}
 
 export default function ProjectPage() {
   const params = useParams<{ id: string }>();
   const api = useApi();
+  const currentUserId = useCurrentUserId();
   const [project, setProject] = useState<Project | null>(null);
   const [files, setFiles] = useState<File[] | null>(null);
   const [error, setError] = useState('');
@@ -56,6 +69,7 @@ export default function ProjectPage() {
       projectId={project.id}
       projectName={project.name}
       initialFiles={files}
+      currentUserId={currentUserId}
     />
   );
 }

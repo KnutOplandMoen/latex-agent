@@ -5,6 +5,7 @@ export const ProjectSchema = z.object({
   ownerId: z.string(),
   name: z.string().min(1).max(255),
   rootFile: z.string().default('main.tex'),
+  lastCompiledJobId: z.string().nullable().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
