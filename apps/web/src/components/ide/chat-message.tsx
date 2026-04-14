@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { User, Bot, ChevronDown, ChevronRight, AlertCircle, Wrench } from 'lucide-react';
 import type { ChatMessage, ToolCallEntry, EditProposal } from '@/hooks/use-agent';
 import { EditProposalCard } from './edit-proposal-card';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface ChatMessageViewProps {
   message: ChatMessage;
@@ -59,7 +61,35 @@ function AssistantMessage({
       </div>
       <div className="flex-1 min-w-0">
         {content && (
-          <div className="text-sm text-[#abb2bf] whitespace-pre-wrap break-words">{content}</div>
+          <div className="text-sm text-[#abb2bf] break-words min-w-0">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                strong: ({ children }) => <strong className="text-[#e5c07b] font-semibold">{children}</strong>,
+                em: ({ children }) => <em className="italic">{children}</em>,
+                code: ({ children, className }) => {
+                  const isBlock = className?.startsWith('language-');
+                  return isBlock ? (
+                    <code className="block bg-[#21252b] rounded p-2 overflow-x-auto text-xs font-mono text-[#abb2bf] my-2">{children}</code>
+                  ) : (
+                    <code className="bg-[#21252b] text-[#e5c07b] px-1 rounded text-xs font-mono">{children}</code>
+                  );
+                },
+                pre: ({ children }) => <pre className="my-2">{children}</pre>,
+                ul: ({ children }) => <ul className="list-disc pl-4 mb-2">{children}</ul>,
+                ol: ({ children }) => <ol className="list-decimal pl-4 mb-2">{children}</ol>,
+                li: ({ children }) => <li className="mb-0.5">{children}</li>,
+                h1: ({ children }) => <h1 className="text-base font-bold text-[#e5c07b] mb-2">{children}</h1>,
+                h2: ({ children }) => <h2 className="text-sm font-bold text-[#e5c07b] mb-1">{children}</h2>,
+                h3: ({ children }) => <h3 className="text-sm font-semibold text-[#abb2bf] mb-1">{children}</h3>,
+                a: ({ href, children }) => <a href={href} className="text-blue-400 underline" target="_blank" rel="noreferrer">{children}</a>,
+                blockquote: ({ children }) => <blockquote className="border-l-2 border-[#3e4451] pl-3 text-[#7f848e] my-2">{children}</blockquote>,
+              }}
+            >
+              {content}
+            </ReactMarkdown>
+          </div>
         )}
 
         {toolCalls?.map((tc, i) => (
