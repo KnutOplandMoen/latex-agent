@@ -1,0 +1,10 @@
+{
+  "name": "@latex-ide/compile",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo 'compile service not yet implemented'",
+    "build": "echo 'compile service not yet implemented'",
+    "typecheck": "echo 'compile service not yet implemented'"
+  }
+}

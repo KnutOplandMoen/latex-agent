@@ -1,0 +1,212 @@
+---
+description: How AI agents apply edits to files. The single highest-leverage piece of agent reliability. Apply when working with the edit_file tool or Sketch+Apply pipeline.
+globs: apps/agent/tools/files.py, apps/agent/agents/**, apps/agent/llm/apply*.py
+---
+
+# AI edit application
+
+How the agent modifies files is the highest-leverage technical decision in the AI layer. Get this right and the agent feels magical. Get it wrong and users will rage-quit.
+
+## The format we use: search/replace blocks
+
+The agent emits edits in this format (model output):
+
+```
+<<<<<<< SEARCH
+\section{Introduction}
+This is a placeholder.
+=======
+\section{Introduction}
+The transformer architecture, introduced by Vaswani et al.~\cite{vaswani2017},
+revolutionized sequence modeling.
+>>>>>>> REPLACE
+```
+
+We parse these out of the assistant message and apply them. Why this format and not unified diffs:
+- LLMs produce it more reliably than diffs (no line numbers to hallucinate).
+- It works across all major models.
+- It's human-readable in the chat UI.
+- Aider achieved 85% on its code-editing benchmark using this format.
+
+## The layered fallback — critical
+
+Exact string matching fails ~30% of the time on real code (whitespace, line endings, the model paraphrasing slightly). Use four layers, falling through on failure:
+
+```python
+# llm/apply.py
+def apply_edit(file_content: str, search: str, replace: str) -> str:
+    # Layer 1: exact match
+    if search in file_content:
+        return file_content.replace(search, replace, 1)
+
+    # Layer 2: whitespace-normalized match
+    normalized_file = normalize_ws(file_content)
+    normalized_search = normalize_ws(search)
+    if normalized_search in normalized_file:
+        # Find the actual location in the original file
+        location = find_with_normalized(file_content, search)
+        return file_content[:location.start] + replace + file_content[location.end:]
+
+    # Layer 3: indentation-flexible match
+    # Strip leading whitespace from each line of search, find a line block in the file
+    # that matches when its indentation is stripped, then re-apply the file's indentation
+    # to the replace block
+    flexible = try_flexible_indent_match(file_content, search, replace)
+    if flexible is not None:
+        return flexible
+
+    # Layer 4: fuzzy match with difflib
+    fuzzy = try_fuzzy_match(file_content, search, replace, threshold=0.85)
+    if fuzzy is not None:
+        return fuzzy
+
+    # Give up — return a structured error so the LLM can self-correct
+    raise EditApplyError(
+        message=f"Could not find the search block in the file.",
+        file_excerpt=file_content[:2000],  # show the first 2000 chars so the LLM sees what's there
+        search_attempted=search,
+    )
+
+def normalize_ws(s: str) -> str:
+    return re.sub(r'\s+', ' ', s).strip()
+```
+
+When the edit fails, **the error becomes a tool result the LLM sees**. The next turn, the LLM sees its own search block, sees what the file actually contains, and tries again with a corrected block. This self-correction loop is what makes layered matching work.
+
+## The Sketch + Apply pattern (recommended for production)
+
+Inspired by Cursor and Aider's Architect/Editor mode. Two models, two roles:
+
+- **Sketch model (Claude Sonnet):** thinks about the project, plans the change, returns a plain-English description of what to do — not precise diffs.
+- **Apply model (Claude Haiku):** receives the sketch + the file content, returns the precise search/replace blocks.
+
+```python
+async def edit_with_sketch_apply(
+    file_path: str,
+    file_content: str,
+    user_intent: str,
+    project_context: str,
+) -> list[Edit]:
+    # Step 1: Sketch (slow, smart)
+    sketch = await claude.messages.create(
+        model='claude-sonnet-4-5',
+        system=SKETCH_PROMPT,
+        messages=[{
+            'role': 'user',
+            'content': f"User wants: {user_intent}\n\nFile {file_path}:\n{file_content}\n\n"
+                       f"Project context:\n{project_context}\n\n"
+                       "Describe the change you'd make in plain English. Do NOT write code yet."
+        }],
+        max_tokens=1024,
+    )
+
+    # Step 2: Apply (fast, cheap, focused)
+    edits = await claude.messages.create(
+        model='claude-haiku-4-5',
+        system=APPLY_PROMPT,
+        messages=[{
+            'role': 'user',
+            'content': f"File {file_path}:\n{file_content}\n\n"
+                       f"Change to make:\n{sketch.content[0].text}\n\n"
+                       "Output search/replace blocks only."
+        }],
+        max_tokens=2048,
+    )
+
+    return parse_search_replace_blocks(edits.content[0].text)
+```
+
+### Why two models
+
+- The strong model thinks clearly without being constrained by output format.
+- The cheap model focuses on a narrow task it does well: producing one specific edit format.
+- Cost: roughly 70% cheaper than asking Sonnet to do both.
+- Reliability: noticeably higher edit-success rate than single-model edits.
+
+## Validation before commit — Shadow Workspace
+
+Before any edit lands in the actual Yjs doc:
+
+1. Apply the edit to a **shadow copy** of the file (just an in-memory string).
+2. Run a fast `latexmk -draftmode` compile — produces no PDF, fast (~2s for most projects).
+3. If the compile gets new fatal errors that weren't there before, **reject** the edit and feed the error back to the LLM.
+4. Only commit accepted edits to Yjs.
+
+```python
+async def apply_with_validation(project_id: str, file_path: str, edit: Edit) -> ApplyResult:
+    original = await read_file_from_yjs(project_id, file_path)
+    new_content = apply_edit(original, edit.search, edit.replace)
+
+    # Shadow compile
+    pre_errors = await fast_compile(project_id, override={file_path: original})
+    post_errors = await fast_compile(project_id, override={file_path: new_content})
+
+    new_errors = diff_errors(pre_errors, post_errors)
+    if new_errors:
+        return ApplyResult(
+            success=False,
+            reason='introduces_compile_errors',
+            errors=new_errors,
+            new_content=new_content,  # so the LLM can see what it tried
+        )
+
+    # Commit to Yjs
+    await write_file_to_yjs(project_id, file_path, new_content)
+    return ApplyResult(success=True)
+```
+
+This catches the common failure mode of agents writing broken LaTeX (unclosed environments, missing braces, undefined commands). Skip in v1 if you want to ship faster — add it once you have real users complaining about broken edits.
+
+## How edits land in Yjs
+
+Edits do NOT bypass Yjs. The agent service writes edits through the same Yjs sync pipeline that human edits use:
+
+```python
+# apps/agent/yjs_writer.py
+async def write_file_to_yjs(project_id: str, file_path: str, new_content: str) -> None:
+    # Connect to Hocuspocus as a service account
+    doc = Y.YDoc()
+    provider = HocuspocusProvider(
+        url=COLLAB_URL,
+        name=f'project:{project_id}:file:{file_id}',
+        document=doc,
+        token=AGENT_SERVICE_TOKEN,  # service-to-service auth
+    )
+    await provider.connected
+
+    ytext = doc.get_text('content')
+    with doc.transaction(origin='agent'):
+        ytext.delete(0, len(ytext))
+        ytext.insert(0, new_content)
+
+    await provider.flush()
+    provider.destroy()
+```
+
+Why route through Yjs and not write directly to Postgres:
+- Other connected clients see the change in real time.
+- Undo works — users can undo an agent's change.
+- The change has an `origin: 'agent'` tag so the UI can highlight it differently.
+- One source of truth, no sync issues.
+
+## Edit confirmation UI
+
+In the chat UI, every agent edit shows up as a card with:
+
+- A `@codemirror/merge` diff preview (before / after)
+- Filename and line range
+- **Accept** and **Reject** buttons
+- An "Accept all" button at the bottom of the message if there are multiple edits
+
+By default, edits are NOT auto-applied. The user must accept them. (Power users can opt into auto-apply in settings — Cursor calls this "YOLO mode.")
+
+## Anti-patterns
+
+- ❌ Asking the LLM to output a full file rewrite. Slow, expensive, error-prone for big files.
+- ❌ Using line numbers in the edit format. LLMs hallucinate them constantly.
+- ❌ Single-layer exact matching with no fallback. ~30% failure rate.
+- ❌ Failing silently when an edit doesn't apply. Always feed the error back to the model.
+- ❌ Auto-applying edits without user confirmation on the first project. Build trust first.
+- ❌ Bypassing Yjs to write edits directly to the database. Breaks realtime sync.
+- ❌ Letting the LLM see an unbounded file. Truncate `read_file` results to the first 500 lines.
+- ❌ Re-running the entire agent loop after an edit failure instead of feeding the error as a tool result. Wastes tokens, slower iteration.

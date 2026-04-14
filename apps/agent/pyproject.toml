@@ -1,0 +1,20 @@
+[project]
+name = "latex-ide-agent"
+version = "0.0.1"
+description = "AI agent service for the LaTeX IDE"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "anthropic",
+    "openai",
+    "sse-starlette",
+    "pydantic>=2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "httpx",
+    "ruff",
+]

@@ -1,0 +1,214 @@
+---
+description: AI agent service architecture — agent loop, tool design, prompts, streaming, cost discipline. Apply when working in apps/agent.
+globs: apps/agent/**/*.py
+---
+
+# AI agent service
+
+Python FastAPI service that runs the agent loop. Talks to Claude (primary) and OpenAI (fallback). Streams events back to the frontend via Server-Sent Events.
+
+## High-level structure
+
+```
+apps/agent/
+├── main.py              FastAPI app + SSE endpoint
+├── agents/
+│   ├── base.py          Shared agent loop
+│   ├── writing.py       LaTeX writing assistant
+│   ├── citation.py      Bib verification
+│   ├── research.py      Web + paper search
+│   └── proofreader.py   Style and grammar
+├── tools/
+│   ├── files.py         read_file, edit_file, list_files, create_file
+│   ├── compile.py       compile_project, get_errors
+│   ├── papers.py        search_papers (Semantic Scholar), verify_citation (CrossRef)
+│   └── web.py           web_search (Tavily)
+├── llm/
+│   ├── claude.py        Anthropic client wrapper
+│   ├── openai.py        OpenAI client wrapper
+│   └── router.py        Picks the right model for the task
+├── context/
+│   ├── builder.py       Builds the system prompt + initial context
+│   └── section_map.py   Lightweight project outline
+└── prompts/
+    ├── writing.md
+    ├── citation.md
+    └── ...
+```
+
+## The agent loop
+
+Every agent shares the same loop. Differences live in tools and prompts.
+
+```python
+# agents/base.py
+async def run_agent(
+    *,
+    agent_type: str,
+    project_id: str,
+    user_id: str,
+    messages: list[Message],
+) -> AsyncIterator[AgentEvent]:
+    tools = TOOLS_FOR[agent_type]
+    system = build_system_prompt(agent_type, project_id)
+
+    while True:
+        response = await claude.messages.create(
+            model=pick_model(agent_type, messages),
+            system=system,
+            tools=[t.schema for t in tools],
+            messages=messages,
+            max_tokens=4096,
+            stream=True,
+        )
+
+        # Stream text tokens as they arrive
+        text_blocks: list[str] = []
+        tool_calls: list[ToolUse] = []
+        async for chunk in response:
+            if chunk.type == 'content_block_delta' and chunk.delta.type == 'text_delta':
+                text_blocks.append(chunk.delta.text)
+                yield TextDelta(text=chunk.delta.text)
+            elif chunk.type == 'content_block_stop' and chunk.content_block.type == 'tool_use':
+                tool_calls.append(chunk.content_block)
+                yield ToolStart(tool=chunk.content_block.name, input=chunk.content_block.input)
+
+        # Add assistant turn to history
+        messages.append({'role': 'assistant', 'content': assemble_content(text_blocks, tool_calls)})
+
+        # Stop conditions
+        if not tool_calls:
+            yield Done()
+            return
+
+        # Execute tools, append results, loop
+        results = []
+        for call in tool_calls:
+            try:
+                result = await execute_tool(call, project_id=project_id, user_id=user_id)
+                yield ToolResult(tool=call.name, result=result)
+                results.append({'type': 'tool_result', 'tool_use_id': call.id, 'content': result})
+            except ToolError as e:
+                yield ToolError(tool=call.name, error=str(e))
+                results.append({'type': 'tool_result', 'tool_use_id': call.id, 'content': str(e), 'is_error': True})
+
+        messages.append({'role': 'user', 'content': results})
+```
+
+### Why this loop
+
+- Streaming text gives the user immediate feedback ("the agent is writing").
+- Tool events let the UI show "calling tool X with args Y" — Cursor-style transparency.
+- Errors are fed back to the model as tool results so it can self-correct.
+
+## Tool design principles
+
+1. **Tools are typed.** Use Pydantic models for inputs and outputs. The Anthropic SDK takes a JSON schema — generate it from Pydantic.
+
+2. **Tools are project-scoped.** Every file tool takes a `project_id` injected by the agent service, never trusted from the LLM. The LLM only knows file paths within the project.
+
+3. **Tools return concise results.** A `read_file` should not return a 50KB file — truncate to the first 500 lines and let the LLM ask for more if needed. Big results burn context.
+
+4. **Tools are idempotent where possible.** `edit_file` is the exception — see the next rule file on edit application.
+
+5. **Tools fail loudly with helpful messages.** If `read_file` fails because the path is wrong, return the list of available paths so the LLM can self-correct.
+
+```python
+# tools/files.py
+class ReadFileInput(BaseModel):
+    path: str = Field(..., description="Relative path within the project, e.g. 'sections/intro.tex'")
+
+class ReadFileOutput(BaseModel):
+    content: str
+    truncated: bool
+    total_lines: int
+
+async def read_file(input: ReadFileInput, *, project_id: str) -> ReadFileOutput:
+    file = await db.get_file_by_path(project_id, input.path)
+    if not file:
+        available = await db.list_file_paths(project_id)
+        raise ToolError(f"No file at '{input.path}'. Available files: {', '.join(available[:20])}")
+    text = file.content
+    lines = text.splitlines()
+    if len(lines) > 500:
+        return ReadFileOutput(content='\n'.join(lines[:500]), truncated=True, total_lines=len(lines))
+    return ReadFileOutput(content=text, truncated=False, total_lines=len(lines))
+```
+
+## Model routing — cost discipline
+
+LLM costs will dominate your bill. Route smart:
+
+```python
+def pick_model(agent_type: str, messages: list[Message]) -> str:
+    last = messages[-1].content
+    if agent_type == 'writing' and is_simple_edit(last):
+        return 'claude-haiku-4-5'  # cheap and fast
+    if agent_type == 'research':
+        return 'claude-sonnet-4-5'  # needs reasoning
+    if agent_type == 'citation':
+        return 'claude-haiku-4-5'  # mostly verification, structured output
+    return 'claude-sonnet-4-5'
+```
+
+### Always enable prompt caching
+
+For repeated context (system prompt, project structure, file contents that don't change between turns), use Anthropic's prompt caching — repeated tokens cost 10% of normal input price.
+
+```python
+system = [
+    {'type': 'text', 'text': base_prompt},
+    {'type': 'text', 'text': project_context, 'cache_control': {'type': 'ephemeral'}},
+]
+```
+
+## Context building
+
+Don't dump the whole project. Build a minimal context:
+
+1. **Always:** project name, file tree (paths only, ~50 lines max), currently open file
+2. **Always:** last compile errors (if any) — they're often what the user wants help with
+3. **On demand via tools:** file contents, search results, bib entries
+
+For projects > 30 files, build an embedding index of sections and retrieve the top 5 most relevant on each turn.
+
+## Streaming protocol (SSE)
+
+The frontend speaks SSE. Each event is a JSON line with a `type`:
+
+```python
+@app.post('/agent/run')
+async def agent_run(req: AgentRunRequest, user: User = Depends(current_user)):
+    async def event_stream():
+        async for event in run_agent(
+            agent_type=req.agent_type,
+            project_id=req.project_id,
+            user_id=user.id,
+            messages=req.messages,
+        ):
+            yield f"data: {event.model_dump_json()}\n\n"
+    return EventSourceResponse(event_stream())
+```
+
+Event types:
+- `text_delta` — streamed text from the model
+- `tool_start` — model called a tool
+- `tool_result` — tool finished successfully
+- `tool_error` — tool failed (LLM will see this and may retry)
+- `done` — agent finished
+- `error` — fatal error (auth, model failure, etc.)
+
+## Auth boundary
+
+The agent service trusts ONLY the API gateway. It verifies the Clerk JWT on every request and looks up project membership before running. **Never** take a project ID without checking the user has access.
+
+## Anti-patterns
+
+- ❌ Long-running global `messages` list. Each request is stateless — history comes in via the request body.
+- ❌ Synchronous LLM calls. Always async, always streaming.
+- ❌ Tools that touch the filesystem directly. Files live in Yjs/Postgres, accessed via the API/db — not via `open()`.
+- ❌ Letting tools take a `user_id` from the LLM input. Inject it server-side.
+- ❌ Returning huge tool results (>4KB) without truncation.
+- ❌ Hardcoding model names in tool code. Use `pick_model()`.
+- ❌ Catching exceptions silently. Errors should surface to the user as `tool_error` events.
+- ❌ Skipping cache_control on stable context. You're leaving 90% cost savings on the table.

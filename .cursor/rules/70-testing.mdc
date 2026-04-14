@@ -1,0 +1,187 @@
+---
+description: Testing strategy — what to test, how, and what to skip. Apply when writing or modifying tests.
+globs: **/*.{test,spec}.{ts,tsx,py}, apps/**/test/**, apps/**/tests/**
+---
+
+# Testing strategy
+
+Real talk: a project this size cannot have 100% test coverage. Test what matters, skip what doesn't. The goal is to ship without obvious regressions, not to win a coverage award.
+
+## What to test (in priority order)
+
+### 1. Permission boundaries — always, no exceptions
+
+Any code that decides "can user X do action Y on project Z" gets tests. This is where security bugs live.
+
+```ts
+// apps/api/src/services/projects.test.ts
+describe('getProject', () => {
+  it('returns the project for a member', async () => {
+    const { user, project } = await seed({ asMember: true });
+    const result = await getProject(project.id, user.id);
+    expect(result.id).toBe(project.id);
+  });
+
+  it('throws ForbiddenError for a non-member', async () => {
+    const { user, project } = await seed({ asMember: false });
+    await expect(getProject(project.id, user.id)).rejects.toThrow(ForbiddenError);
+  });
+
+  it('throws NotFoundError for a deleted project', async () => {
+    // ...
+  });
+});
+```
+
+Test the same for every route that takes a project ID, file ID, or user ID from the request.
+
+### 2. The agent edit-application logic
+
+Layered fallback edit application is critical and has many edge cases. Cover them:
+
+```python
+# apps/agent/tests/test_apply.py
+class TestEditApply:
+    def test_exact_match(self):
+        result = apply_edit("hello world", search="hello", replace="goodbye")
+        assert result == "goodbye world"
+
+    def test_whitespace_normalized(self):
+        # Search has different whitespace than file
+        file = "def foo(  ):\n    return 1"
+        result = apply_edit(file, search="def foo():\n    return 1", replace="def foo():\n    return 2")
+        assert "return 2" in result
+
+    def test_indentation_flexible(self):
+        # Search is unindented, file is indented
+        file = "    if x:\n        return 1"
+        result = apply_edit(file, search="if x:\n    return 1", replace="if x:\n    return 2")
+        assert "return 2" in result
+
+    def test_fuzzy_match_with_typo(self):
+        # File has 'colour', search has 'color'
+        # ...
+
+    def test_fails_loudly_when_unfindable(self):
+        with pytest.raises(EditApplyError) as exc_info:
+            apply_edit("unrelated content", search="not present", replace="x")
+        assert "not present" in str(exc_info.value)
+        assert "unrelated content" in exc_info.value.file_excerpt
+```
+
+### 3. LaTeX log parsing
+
+Real LaTeX logs are messy. Snapshot tests are perfect here:
+
+```ts
+// apps/compile/test/log-parser.test.ts
+it('parses a missing brace error', () => {
+  const log = readFileSync('./fixtures/missing-brace.log', 'utf-8');
+  expect(parseLog(log)).toMatchSnapshot();
+});
+```
+
+Collect real log fixtures from broken compiles in dev. Add a new fixture every time a user reports a parsing bug.
+
+### 4. Yjs persistence round-trips
+
+Make sure updates can be saved and loaded correctly:
+
+```ts
+it('round-trips a Yjs document through the database', async () => {
+  const doc = new Y.Doc();
+  doc.getText('content').insert(0, '\\section{Test}');
+
+  const update = Y.encodeStateAsUpdate(doc);
+  await saveYjsUpdate('test-doc', update);
+
+  const loaded = await loadYjsState('test-doc');
+  const restored = new Y.Doc();
+  Y.applyUpdate(restored, loaded);
+
+  expect(restored.getText('content').toString()).toBe('\\section{Test}');
+});
+```
+
+### 5. End-to-end smoke tests
+
+One per critical user path. Use Playwright. Don't try to be exhaustive — just catch broken pages.
+
+- Sign up → create project → see editor
+- Edit a `.tex` file → save → reload → changes are there
+- Compile a project → PDF appears
+- Two users in the same project see each other's edits
+- Send an agent message → get a response
+
+When one of these fails, you know something is badly broken.
+
+## What NOT to test
+
+- ❌ React component snapshots. They break on every UI tweak and nobody reads the diffs.
+- ❌ CodeMirror itself. It's tested upstream.
+- ❌ Yjs itself. Same.
+- ❌ Drizzle queries that just call `db.select`. Trust the ORM.
+- ❌ Trivial getters and setters.
+- ❌ Pure presentational components with no logic.
+- ❌ Anything that requires mocking the LLM API extensively. Test the agent loop with a fake LLM, not by stubbing 50 lines of API responses.
+
+## Test infrastructure
+
+### Database
+
+Each test gets a clean schema. Use **testcontainers** to spin up Postgres per test file:
+
+```ts
+// test/setup.ts
+import { PostgreSqlContainer } from '@testcontainers/postgresql';
+
+export async function setupTestDb() {
+  const container = await new PostgreSqlContainer().start();
+  const db = drizzle(container.getConnectionUri());
+  await migrate(db, { migrationsFolder: './packages/db/migrations' });
+  return { db, teardown: () => container.stop() };
+}
+```
+
+Slow on first run (pulls the image). Subsequent runs are fast. Worth it — you can test real SQL behavior, not a mock.
+
+### LLM calls
+
+Build a fake Claude client that returns canned responses keyed by the input. Use it in tests:
+
+```python
+# apps/agent/tests/fakes.py
+class FakeClaudeClient:
+    def __init__(self, responses: dict[str, str]):
+        self.responses = responses
+        self.calls = []
+
+    async def messages_create(self, **kwargs):
+        self.calls.append(kwargs)
+        key = hash_messages(kwargs['messages'])
+        return MockResponse(text=self.responses[key])
+```
+
+Use real API calls only in a separate `tests/integration/` suite that runs nightly, not on every PR.
+
+### Compile worker
+
+Don't actually run TeX Live in unit tests. Mock the Docker call and feed canned log output. Run a real compile in one integration test.
+
+## When NOT to write a test first
+
+Greenfield exploration. If you're trying to figure out what the API should even look like, write the code, get it working, then write a test for the version you settled on. TDD is great for known shapes, slow for unknown ones.
+
+## Coverage target
+
+Aim for ~60% line coverage across the project, with the **critical paths above at 90%+**. A 60% project that covers the right things is safer than an 85% project that tests trivia.
+
+## Anti-patterns
+
+- ❌ Mocking the database. Use testcontainers.
+- ❌ Sleeping in tests to wait for async work. Use proper awaiting.
+- ❌ Tests that depend on each other or run order.
+- ❌ Tests that hit real LLM APIs in CI (cost + flakiness).
+- ❌ One giant integration test instead of small focused unit tests.
+- ❌ Snapshot tests of UI components.
+- ❌ Skipping a test instead of fixing or deleting it. `it.skip` rots.

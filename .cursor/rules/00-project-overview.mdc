@@ -1,0 +1,76 @@
+---
+description: Project overview, architecture, and conventions. Always loaded.
+alwaysApply: true
+---
+
+# LaTeX IDE — project overview
+
+A web-based collaborative LaTeX IDE with Cursor-style AI agents. Think "Overleaf meets Cursor."
+
+## What this project is
+
+- Multi-user real-time collaborative LaTeX editor (Overleaf-style)
+- Browser-based, no install
+- AI coding agent that can edit `.tex` files, fix compile errors, search papers
+- Specialized agents: writing, citation checking, deep research, proofreading
+
+## Architecture (monorepo)
+
+```
+apps/
+  web/      Next.js 15 frontend (App Router, RSC, React 19)
+  api/      Fastify main API (Node.js + TypeScript)
+  collab/   Hocuspocus Yjs WebSocket server
+  compile/  LaTeX compile worker (BullMQ → Docker → TeX Live)
+  agent/    Python FastAPI agent service (LLM orchestration)
+packages/
+  shared-types/   Zod schemas + TS types shared by web and api
+  db/             Drizzle ORM schema + migrations
+  latex-lang/     Custom CodeMirror 6 LaTeX extensions
+docker/
+  texlive.Dockerfile
+  docker-compose.yml
+```
+
+## The stack (do not change without explicit user approval)
+
+| Layer | Choice |
+|---|---|
+| Frontend | Next.js 15 + React 19 + TypeScript |
+| Editor | CodeMirror 6 + `codemirror-lang-latex` |
+| Realtime | Yjs + `y-codemirror.next` + Hocuspocus |
+| Backend | Fastify (Node/TS) |
+| Agent service | Python FastAPI |
+| DB | PostgreSQL 16 + Drizzle ORM |
+| Cache/queue | Redis 7 + BullMQ |
+| Object storage | Cloudflare R2 (S3-compatible) |
+| Auth | Clerk |
+| LaTeX runtime | TeX Live full in Docker |
+| LLM APIs | Anthropic Claude (primary), OpenAI (fallback) |
+
+## Important non-negotiables
+
+- **Never** suggest replacing CodeMirror 6 with Monaco. The decision is locked.
+- **Never** suggest replacing Yjs with Operational Transform. CRDTs are locked.
+- **Never** run user LaTeX outside a Docker sandbox. This is a security boundary.
+- **Never** put compile working directories on networked storage (NFS, EBS gp2). Local SSD only — Overleaf documented that this causes "unexpected compile errors."
+- **Never** keep Y.Doc instances in the main API process memory. Yjs lives in the `collab` service.
+- **Never** add browser storage (`localStorage`, `sessionStorage`) inside the editor — use Yjs + IndexedDB via `y-indexeddb`.
+
+## Coding conventions
+
+- TypeScript strict mode everywhere. No `any` without an `// eslint-disable-next-line` and a comment explaining why.
+- Zod schemas live in `packages/shared-types` and are imported by both frontend and backend. Never duplicate type definitions.
+- API responses always go through a Zod schema before being sent.
+- Database access only through Drizzle. No raw SQL except in migrations.
+- Async/await everywhere. No `.then()` chains.
+- Error handling: throw typed errors, catch at the route boundary, return structured error responses.
+- File naming: kebab-case for files, PascalCase for React components, camelCase for everything else.
+- No default exports except for Next.js pages and React components.
+
+## When the user asks "how should I do X"
+
+1. Check if there's a more specific rule loaded for this area (codemirror, yjs, latex, agent, etc.) — those override this file.
+2. Match the existing patterns in the codebase before inventing new ones.
+3. If introducing a new dependency, justify why an existing one doesn't work.
+4. Prefer boring technology. This project is already complex enough.

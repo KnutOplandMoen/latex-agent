@@ -1,0 +1,162 @@
+---
+description: Drizzle ORM, schema, migration discipline. Apply when working with database code.
+globs: packages/db/**/*.ts, apps/api/src/services/**
+---
+
+# Database — Drizzle + PostgreSQL
+
+Single source of truth for schema lives in `packages/db/schema.ts`. Every service imports tables from there.
+
+## Schema layout
+
+```ts
+// packages/db/schema.ts
+import { pgTable, uuid, text, timestamp, jsonb, bigserial, bytea, index, primaryKey } from 'drizzle-orm/pg-core';
+import { relations } from 'drizzle-orm';
+
+export const users = pgTable('users', {
+  id: text('id').primaryKey(), // Clerk user ID, not a UUID
+  email: text('email').notNull().unique(),
+  name: text('name'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const projects = pgTable('projects', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  ownerId: text('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  rootFile: text('root_file').notNull().default('main.tex'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const projectMembers = pgTable('project_members', {
+  projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  role: text('role', { enum: ['owner', 'editor', 'viewer'] }).notNull(),
+  addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.projectId, t.userId] }),
+  userIdx: index('project_members_user_idx').on(t.userId),
+}));
+
+export const files = pgTable('files', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  path: text('path').notNull(),
+  type: text('type', { enum: ['tex', 'bib', 'image', 'other'] }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  projectPathIdx: index('files_project_path_idx').on(t.projectId, t.path),
+}));
+
+export const yjsUpdates = pgTable('yjs_updates', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  documentName: text('document_name').notNull(),
+  update: bytea('update').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  docIdx: index('yjs_updates_doc_idx').on(t.documentName, t.id),
+}));
+
+// Relations
+export const projectsRelations = relations(projects, ({ one, many }) => ({
+  owner: one(users, { fields: [projects.ownerId], references: [users.id] }),
+  members: many(projectMembers),
+  files: many(files),
+}));
+// ... etc
+```
+
+## Schema rules
+
+- **Always** include `createdAt`, prefer also `updatedAt`. Use `withTimezone: true`.
+- **Always** add `onDelete: 'cascade'` (or `'set null'`) to foreign keys. No orphans.
+- **Always** add an index for any column you query on. Especially foreign keys used in joins.
+- **Always** use `uuid` for our internal IDs. Use `text` for external IDs (Clerk user IDs are strings).
+- **Never** use `varchar(N)`. Just use `text` — Postgres has no perf difference.
+- **Never** add columns directly to a generated migration file. Edit `schema.ts` and regenerate.
+
+## Migrations
+
+```bash
+# After editing schema.ts
+pnpm drizzle-kit generate
+
+# Review the generated SQL in packages/db/migrations/
+# THEN apply
+pnpm drizzle-kit migrate
+```
+
+### Migration discipline
+
+- **Always review** the generated SQL before applying. Drizzle is good but not perfect.
+- **Never** edit a migration that has been applied to production. Write a new one.
+- **Never** drop a column in the same migration that adds a new one. Multi-step:
+  1. Add the new column (nullable)
+  2. Backfill data
+  3. Make the new column NOT NULL (separate migration)
+  4. Drop the old column (separate migration, after deploying code that doesn't reference it)
+- **Always** include a `down` plan in the PR description, even though Drizzle doesn't auto-generate one.
+- **Test migrations on a copy of production data** before deploying.
+
+## Querying — use the relational API
+
+Drizzle has two query styles. Prefer the relational API for reads:
+
+```ts
+// ✅ Good — readable, type-safe, fewer footguns
+const project = await db.query.projects.findFirst({
+  where: eq(projects.id, projectId),
+  with: {
+    members: { with: { user: true } },
+    files: { columns: { id: true, path: true, type: true } },
+  },
+});
+
+// ❌ Avoid for complex reads — verbose, error-prone joins
+const project = await db.select(/* ... */).from(projects)
+  .leftJoin(projectMembers, eq(projects.id, projectMembers.projectId))
+  .leftJoin(users, eq(projectMembers.userId, users.id))
+  // ...
+```
+
+Use the SQL builder for writes (`insert`, `update`, `delete`) and aggregations (`count`, `sum`).
+
+## Transactions
+
+Anything that touches multiple tables uses a transaction:
+
+```ts
+await db.transaction(async (tx) => {
+  const [project] = await tx.insert(projects).values({...}).returning();
+  await tx.insert(projectMembers).values({ projectId: project.id, userId, role: 'owner' });
+  await tx.insert(files).values({ projectId: project.id, path: 'main.tex', type: 'tex' });
+});
+```
+
+If anything throws, the whole thing rolls back.
+
+## Special tables — Yjs updates
+
+The `yjs_updates` table is append-only and high-volume. Treat it differently:
+
+- **Never** UPDATE rows. Only INSERT and DELETE (during compaction).
+- **Always** query by `documentName` with the index. Full scans will kill the DB.
+- Compaction job runs nightly: read all rows for docs > 100 updates → encode merged state → delete rows → insert single snapshot.
+
+## Connection pooling
+
+In production, use **PgBouncer** in transaction mode (not session) between Drizzle and Postgres. Drizzle's default pool of 10 connections per process explodes fast under load.
+
+For the API service: 10 connections per process, 4 processes = 40 connections. Use PgBouncer to multiplex these into ~20 actual Postgres connections.
+
+## Anti-patterns
+
+- ❌ Storing `.tex` content in a `text` column instead of via Yjs. Yjs is the source of truth.
+- ❌ N+1 queries. Use `with: { ... }` to eager-load relations.
+- ❌ `SELECT *`. Use `columns: { ... }` to fetch only what you need.
+- ❌ Long-running transactions. They hold row locks and deadlock under load. Keep them short.
+- ❌ Using `drizzle-kit push` in production. Always go through `generate` + `migrate`.
+- ❌ Storing JSON blobs that you query by content. If you need to query it, normalize it into columns.
+- ❌ Forgetting indexes on foreign keys. Postgres does NOT auto-index FKs.

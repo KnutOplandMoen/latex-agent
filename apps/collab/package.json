@@ -1,0 +1,10 @@
+{
+  "name": "@latex-ide/collab",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo 'collab service not yet implemented'",
+    "build": "echo 'collab service not yet implemented'",
+    "typecheck": "echo 'collab service not yet implemented'"
+  }
+}

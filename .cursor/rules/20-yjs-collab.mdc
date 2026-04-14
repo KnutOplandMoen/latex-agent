@@ -1,0 +1,173 @@
+---
+description: Yjs CRDT rules — document lifecycle, awareness, persistence, anti-patterns. Apply when working with collab code.
+globs: apps/web/components/editor/**, apps/collab/**, packages/latex-lang/collab*
+---
+
+# Yjs collaboration
+
+Yjs is the source of truth for document content. Any code that touches `.tex` content goes through Yjs.
+
+## The mental model
+
+- A **`Y.Doc`** is a CRDT document. It contains shared types (`Y.Text`, `Y.Map`, `Y.Array`).
+- **Updates** are binary diffs that can be applied in any order on any peer and converge.
+- **Awareness** is ephemeral state (cursors, presence). It does NOT persist.
+- **Providers** sync `Y.Doc`s between peers (we use `HocuspocusProvider` for WebSocket).
+
+## Document granularity
+
+**One `Y.Doc` per file**, not per project.
+
+- Reasons: lazy loading, per-file undo, smaller memory, simpler permissions.
+- Document name format: `project:{projectId}:file:{fileId}`
+- Project-level metadata (file tree, settings) lives in a separate `project:{projectId}` doc as a `Y.Map`.
+
+## Connecting from the frontend
+
+```ts
+import * as Y from 'yjs';
+import { HocuspocusProvider } from '@hocuspocus/provider';
+import { IndexeddbPersistence } from 'y-indexeddb';
+
+const ydoc = new Y.Doc();
+
+// Local persistence — survives reload, enables offline editing
+const local = new IndexeddbPersistence(`project:${projectId}:file:${fileId}`, ydoc);
+
+// Remote sync via Hocuspocus
+const provider = new HocuspocusProvider({
+  url: process.env.NEXT_PUBLIC_COLLAB_URL!,
+  name: `project:${projectId}:file:${fileId}`,
+  document: ydoc,
+  token: clerkToken, // forwarded to onAuthenticate
+});
+
+const ytext = ydoc.getText('content');
+
+// Hand to CodeMirror
+import { yCollab } from 'y-codemirror.next';
+extensions.push(yCollab(ytext, provider.awareness));
+```
+
+### Cleanup is mandatory
+
+When the user closes a file or unmounts the editor:
+
+```ts
+provider.destroy();   // closes WebSocket, removes listeners
+local.destroy();      // closes IndexedDB connection
+ydoc.destroy();       // frees memory
+```
+
+Forgetting these leaks WebSockets and event listeners. Easy to find with React DevTools profiler.
+
+## Awareness (cursors, presence)
+
+```ts
+provider.awareness.setLocalStateField('user', {
+  name: clerkUser.fullName,
+  color: colorForUser(clerkUser.id), // deterministic from user ID
+});
+```
+
+States expire 30 seconds after a peer disconnects. Don't put anything important here — only ephemeral UI hints.
+
+## Mutations — always use transactions
+
+Group related changes into a transaction so they appear atomic to other peers and to undo:
+
+```ts
+ydoc.transact(() => {
+  ymap.set('title', 'New title');
+  ymap.set('updatedAt', Date.now());
+}, 'metadata-update'); // origin string for filtering in observers
+```
+
+The `origin` is critical — when observing, you can tell whether a change came from local input, remote sync, or a programmatic update:
+
+```ts
+ytext.observe((event, transaction) => {
+  if (transaction.origin === 'remote') return; // ignore echo
+  // ...
+});
+```
+
+## Undo
+
+Each user has their own undo stack via `Y.UndoManager`. Undo only reverses **your own** changes, not collaborators'.
+
+```ts
+const undoManager = new Y.UndoManager(ytext, {
+  trackedOrigins: new Set([null, 'local-edit']), // only track these
+});
+undoManager.undo();
+undoManager.redo();
+```
+
+`y-codemirror.next` wires this up automatically — don't add a second undo manager.
+
+## Persistence on the server (Hocuspocus)
+
+In `apps/collab/src/index.ts`:
+
+```ts
+import { Server } from '@hocuspocus/server';
+import { Database } from '@hocuspocus/extension-database';
+
+const server = new Server({
+  port: 3030,
+  async onAuthenticate({ token, documentName }) {
+    // Verify Clerk JWT, look up project ID from documentName, check membership
+    const user = await verifyClerkToken(token);
+    const projectId = parseProjectId(documentName);
+    const member = await db.query.projectMembers.findFirst({
+      where: and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, user.id)),
+    });
+    if (!member) throw new Error('Unauthorized');
+    return { user, role: member.role };
+  },
+  extensions: [
+    new Database({
+      fetch: async ({ documentName }) => loadYjsState(documentName),
+      store: async ({ documentName, state }) => saveYjsState(documentName, state),
+    }),
+  ],
+});
+```
+
+### Storage schema
+
+Append-only log table:
+
+```sql
+CREATE TABLE yjs_updates (
+  id BIGSERIAL PRIMARY KEY,
+  document_name TEXT NOT NULL,
+  update BYTEA NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ON yjs_updates (document_name, id);
+```
+
+Loading: read all rows for the document, apply each update with `Y.applyUpdate(doc, row.update)`.
+Saving: append the new merged update as a new row.
+
+A nightly job compacts old rows: load all rows for a doc → encode the full state with `Y.encodeStateAsUpdate(doc)` → delete the rows → insert one row with the snapshot.
+
+## Permission boundary — critical
+
+Permission checks happen in **two** places:
+
+1. **Fastify API** routes (REST CRUD) — middleware that resolves Clerk user → checks `projectMembers`.
+2. **Hocuspocus `onAuthenticate`** — same logic, runs on WebSocket handshake.
+
+If you forget #2, anyone with a project ID can edit any document. Test this explicitly.
+
+## Anti-patterns
+
+- ❌ Storing `.tex` content in PostgreSQL `text` columns and also in Yjs. Pick one source of truth (Yjs).
+- ❌ Putting Yjs docs in the main API process. Yjs lives in `apps/collab` only.
+- ❌ Using `Y.Map.set('content', longString)` to store document text. Use `Y.Text` for collaborative text.
+- ❌ Calling `Y.applyUpdate` on a doc you don't own. Only the provider should apply remote updates.
+- ❌ Subscribing to `ytext.observe` from inside React render. Subscribe in `useEffect`, unsubscribe in cleanup.
+- ❌ Manually computing diffs. Yjs IS the diff machine — use `Y.encodeStateAsUpdate(doc, stateVector)`.
