@@ -7,14 +7,22 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { bracketMatching, indentOnInput, foldGutter, foldKeymap } from '@codemirror/language';
-import { linter, lintKeymap } from '@codemirror/lint';
+import { linter, lintKeymap, setDiagnostics, type Diagnostic } from '@codemirror/lint';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { latex, latexLinter } from 'codemirror-lang-latex';
 import type * as Y from 'yjs';
 
+export interface ExternalDiagnostic {
+  line: number;
+  message: string;
+  severity: 'error' | 'warning' | 'info';
+}
+
 export interface EditorHandle {
   insertText: (text: string) => void;
   scrollToLine: (line: number) => void;
+  setExternalDiagnostics: (diagnostics: ExternalDiagnostic[]) => void;
+  getCursorLine: () => number | null;
 }
 
 interface BaseEditorProps {
@@ -183,6 +191,29 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         effects: EditorView.scrollIntoView(lineInfo.from, { y: 'center' }),
       });
       view.focus();
+    },
+    setExternalDiagnostics(externalDiags: ExternalDiagnostic[]) {
+      const view = viewRef.current;
+      if (!view) return;
+      const cmDiags: Diagnostic[] = externalDiags
+        .filter((d) => d.line >= 1 && d.line <= view.state.doc.lines)
+        .map((d) => {
+          const lineInfo = view.state.doc.line(d.line);
+          return {
+            from: lineInfo.from,
+            to: lineInfo.to,
+            severity: d.severity,
+            message: d.message,
+            source: 'latex-compile',
+          };
+        });
+      view.dispatch(setDiagnostics(view.state, cmDiags));
+    },
+    getCursorLine() {
+      const view = viewRef.current;
+      if (!view) return null;
+      const pos = view.state.selection.main.head;
+      return view.state.doc.lineAt(pos).number;
     },
   }));
 

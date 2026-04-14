@@ -1,3 +1,6 @@
+import { config } from 'dotenv';
+config({ path: '../../.env' });
+
 import { Server } from '@hocuspocus/server';
 import { Database } from '@hocuspocus/extension-database';
 import { createDb } from '@latex-ide/db';

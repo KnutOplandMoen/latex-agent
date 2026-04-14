@@ -22,6 +22,7 @@ interface CommandPaletteProps {
   onToggleLeftPanel: () => void;
   onToggleRightPanel: () => void;
   onInsertText?: (text: string) => void;
+  onCompile?: () => void;
 }
 
 const GREEK_SYMBOLS = [
@@ -68,6 +69,7 @@ export function CommandPalette({
   onToggleLeftPanel,
   onToggleRightPanel,
   onInsertText,
+  onCompile,
 }: CommandPaletteProps) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -123,6 +125,7 @@ export function CommandPalette({
             <Command.Item
               value="compile project"
               onSelect={() => {
+                onCompile?.();
                 onOpenChange(false);
               }}
               className="flex items-center gap-2 px-2 py-1.5 rounded text-sm text-[#abb2bf] cursor-pointer data-[selected=true]:bg-[#2c313a]"

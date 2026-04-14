@@ -1,3 +1,6 @@
+import { config } from 'dotenv';
+config({ path: '../../.env' });
+
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import {
@@ -11,6 +14,10 @@ import projectsRoutes from './routes/projects/index.js';
 import projectByIdRoutes from './routes/projects/_id.js';
 import projectFilesRoutes from './routes/projects/files.js';
 import fileByIdRoutes from './routes/files/_id.js';
+import redisPlugin from './plugins/redis.js';
+import compileQueuePlugin from './plugins/compile-queue.js';
+import compileRoutes from './routes/projects/compile.js';
+import compilesRoutes from './routes/compiles/index.js';
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -34,6 +41,8 @@ async function start() {
   });
   await fastify.register(errorHandler);
   await fastify.register(dbPlugin);
+  await fastify.register(redisPlugin);
+  await fastify.register(compileQueuePlugin);
   await fastify.register(auth);
 
   fastify.get('/health', async () => {
@@ -44,6 +53,8 @@ async function start() {
   await fastify.register(projectByIdRoutes, { prefix: '/projects' });
   await fastify.register(projectFilesRoutes, { prefix: '/projects' });
   await fastify.register(fileByIdRoutes, { prefix: '/files' });
+  await fastify.register(compileRoutes, { prefix: '/projects' });
+  await fastify.register(compilesRoutes, { prefix: '/compiles' });
 
   await fastify.listen({ port: PORT, host: HOST });
   fastify.log.info(`API server running on http://${HOST}:${PORT}`);

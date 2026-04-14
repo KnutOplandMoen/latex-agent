@@ -28,3 +28,18 @@ export {
   type CreateFileInputType,
   type UpdateFileInputType,
 } from './file.js';
+
+export {
+  CompileRequestSchema,
+  CompileErrorSchema,
+  CompileStatus,
+  CompileResultSchema,
+  SyncTexEntrySchema,
+  SyncTexDataSchema,
+  type CompileRequestType,
+  type CompileError,
+  type CompileStatusType,
+  type CompileResult,
+  type SyncTexEntry,
+  type SyncTexData,
+} from './compile.js';

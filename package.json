@@ -7,7 +7,8 @@
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
-    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\""
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\"",
+    "docker:build:texlive": "docker build -t latex-ide-texlive:2025 -f docker/texlive.Dockerfile docker"
   },
   "packageManager": "pnpm@9.15.4",
   "engines": {

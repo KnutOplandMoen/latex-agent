@@ -14,7 +14,7 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 | Phase 1 — The editor | **DONE** | CodeMirror 6 with LaTeX support, IDE layout, command palette, outline view |
 | Phase 2 — Backend, persistence, projects | **DONE** | Auth (Clerk + dev bypass), project CRUD, file persistence via Postgres, dashboard, API-backed editor |
 | Phase 3 — Realtime collaboration | **DONE** | Yjs + Hocuspocus + awareness, offline support, presence UI |
-| Phase 4 — LaTeX compilation | Not started | TeX Live Docker, compile worker, PDF preview |
+| Phase 4 — LaTeX compilation | **DONE** | TeX Live Docker image, BullMQ compile worker, API compile routes, pdf.js PDF viewer, inline error diagnostics, SyncTeX forward+reverse sync |
 | Phase 5 — AI agent layer | Not started | Python FastAPI agent, tools, chat UI |
 | Phase 6 — History, diff, polish | Not started | Version history, comments, sharing, import/export |
 | Phase 7 — Hosting and launch | Not started | Deployment, observability, launch |
@@ -25,9 +25,9 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 - `apps/web/` — Next.js 15 + React 19 + Tailwind CSS 4 + Clerk auth
 - `apps/api/` — Fastify with Clerk JWT auth (dev bypass), Drizzle DB plugin, project + file CRUD routes
 - `apps/collab/` — Hocuspocus Yjs WebSocket server with Clerk auth, DB persistence, viewer read-only
-- `apps/compile/` — placeholder
+- `apps/compile/` — BullMQ compile worker with Dockerized TeX Live, log parser, SyncTeX parser
 - `apps/agent/` — Python placeholder with `pyproject.toml`
-- `packages/shared-types/` — Zod schemas for User, Project, ProjectMember, File (with content), UpdateFile
+- `packages/shared-types/` — Zod schemas for User, Project, ProjectMember, File (with content), UpdateFile, Compile (request, result, errors, SyncTeX)
 - `packages/db/` — Drizzle ORM schema (users, projects, projectMembers, files with content, yjsUpdates), migrations, client, seed script
 - `packages/latex-lang/` — placeholder for custom CM6 extensions
 
@@ -41,11 +41,25 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 - Offline banner shown when WebSocket is disconnected
 - Sync status indicator (Synced / Syncing / Offline) replaces the old save status
 - One Dark theme, JetBrains Mono font (self-hosted via `next/font/google`)
-- Three-pane resizable layout (`react-resizable-panels`): file tree + outline | editor with tabs | PDF placeholder
+- Three-pane resizable layout (`react-resizable-panels`): file tree + outline | editor with tabs | PDF viewer (pdf.js)
 - Outline view parsing `\section` / `\subsection` hierarchy — click to navigate to line
 - Command palette (`cmdk`) on Ctrl+K with file switching, toggle panels, symbol/operator insertion into editor
 - File creation and deletion from the file tree (with confirmation)
+- External compile diagnostics: compile errors and warnings displayed as inline CodeMirror squiggles
 - Error boundaries at root and project level
+
+**LaTeX compilation:**
+- TeX Live Docker image (`docker/texlive.Dockerfile`) with full texlive, latexmk, biber
+- Compile worker (`apps/compile`) listens on BullMQ `compile` queue, concurrency 4
+- Sandboxed Docker containers: `--network none`, `--memory 2g`, `--cpus 1`, `--pids-limit 256`, `--read-only`, `--cap-drop ALL`, `-no-shell-escape`
+- LaTeX log parser extracts errors and warnings with file/line info
+- SyncTeX parser reads `.synctex.gz` for source-PDF bidirectional navigation
+- PDF viewer: `pdfjs-dist` rendering with zoom controls, page navigation
+- Compile button in top bar + `Ctrl+Enter` keyboard shortcut + command palette action
+- Compile log panel: issues tab (clickable errors/warnings) + raw log tab
+- Reverse SyncTeX: click in PDF jumps to source line in editor
+- Forward SyncTeX: `Ctrl+Shift+Enter` scrolls PDF to current editor cursor position
+- Compile status in status bar (Compiling / Compiled / N errors)
 
 **Backend:**
 - Fastify API with `fastify-type-provider-zod` for end-to-end typed routes
@@ -55,8 +69,10 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 - RBAC: viewers cannot create, edit, or delete files
 - Clerk JWT authentication with dev bypass (gated on `NODE_ENV !== 'production'`)
 - Auto user upsert on first authenticated request (no separate webhook needed for basic usage)
+- Compile routes: `POST /projects/:id/compile` (enqueue), `GET /projects/:id/compile/:jobId` (poll status), `GET /compiles/:jobId/output.pdf` (serve PDF)
+- Redis plugin + BullMQ compile queue plugin
 - Configurable CORS origin via `CORS_ORIGIN` env var
-- Graceful DB pool shutdown on Fastify close
+- Graceful DB pool + Redis shutdown on Fastify close
 
 **Dashboard:**
 - `/dashboard` page with project list, create project dialog, delete project (with confirmation)
@@ -64,7 +80,7 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 - `/` redirects to `/dashboard`
 
 **Infrastructure:**
-- `docker/docker-compose.yml` with PostgreSQL 16 + Redis 7
+- `docker/docker-compose.yml` with PostgreSQL 16 + Redis 7; `docker/texlive.Dockerfile` for TeX Live image
 - `.env.example` with all expected environment variables
 - `DECISIONS.md` with locked-in stack choices
 - Root configs: `tsconfig.base.json` (strict), `.prettierrc`, `turbo.json`
@@ -72,10 +88,14 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 
 ### Known issues / next steps
 
-- No compile functionality — PDF pane is a placeholder (Phase 4)
 - Clerk auth requires credentials from clerk.com — set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` to enable; without them, dev bypass is active (blocked in production via `NODE_ENV`)
 - Run `docker compose up` then `pnpm --filter @latex-ide/db db:migrate` then `pnpm --filter @latex-ide/db db:seed` to set up the database
-- Command palette "Compile Project" and "Find in Files" actions are stubs (Phase 4 / future)
+- Build the TeX Live Docker image before first compile: `pnpm docker:build:texlive` (~2.3 GB, takes a while)
+- Start the compile worker alongside the other services: `pnpm --filter @latex-ide/compile dev`
+- Compiled PDFs stored on local filesystem (`COMPILE_OUTPUT_DIR`) — migrate to Cloudflare R2 for production
+- No aux file caching between compiles yet — each compile starts fresh (optimization for later)
+- No Tectonic fast-preview engine — TeX Live only for now
+- Command palette "Find in Files" action is still a stub (future)
 - `packages/latex-lang/` is a placeholder — custom CM6 extensions not yet implemented
 - No `yjs_updates` compaction job yet — rows accumulate indefinitely (future optimization)
 - File tree is REST-based, not synced via Yjs (a project-level Y.Map could be added later)
@@ -364,7 +384,7 @@ This persists each Y.Doc to the user's IndexedDB. They can edit offline; when th
 
 ---
 
-## Phase 4 — LaTeX compilation (Weeks 9–11)
+## Phase 4 — LaTeX compilation (Weeks 9–11) ✅ DONE
 
 Goal: click a button (or save), get a PDF.
 

@@ -4,6 +4,7 @@ import type {
   FileWithContent,
   CreateProjectInputType,
   CreateFileInputType,
+  CompileResult,
 } from '@latex-ide/shared-types';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
@@ -85,6 +86,20 @@ export function createApiClient(getToken: GetToken) {
 
       remove: (id: string) =>
         request<void>(`/files/${id}`, getToken, { method: 'DELETE' }),
+    },
+
+    compile: {
+      start: (projectId: string, rootFile?: string) =>
+        request<{ jobId: string }>(`/projects/${projectId}/compile`, getToken, {
+          method: 'POST',
+          body: JSON.stringify({ rootFile }),
+        }),
+
+      status: (projectId: string, jobId: string) =>
+        request<CompileResult>(`/projects/${projectId}/compile/${jobId}`, getToken),
+
+      pdfUrl: (jobId: string, projectId: string) =>
+        `${BASE_URL}/compiles/${jobId}/output.pdf?projectId=${projectId}`,
     },
   };
 }

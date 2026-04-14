@@ -1,3 +1,6 @@
+import { config } from 'dotenv';
+config({ path: '../../.env' });
+
 import { eq } from 'drizzle-orm';
 import { createDb } from './client.js';
 import { users, projects, projectMembers, files } from './schema.js';
