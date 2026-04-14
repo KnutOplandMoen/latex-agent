@@ -14,6 +14,7 @@ export function ProjectList() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -36,6 +37,11 @@ export function ProjectList() {
   }
 
   async function handleDelete(id: string) {
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      return;
+    }
+    setConfirmDeleteId(null);
     try {
       await api.projects.remove(id);
       setProjects((prev) => prev.filter((p) => p.id !== id));
@@ -97,13 +103,31 @@ export function ProjectList() {
                   </div>
                 </div>
               </Link>
-              <button
-                onClick={() => handleDelete(project.id)}
-                className="absolute top-3 right-3 p-1.5 rounded opacity-0 group-hover:opacity-100 text-[#5c6370] hover:text-red-400 hover:bg-[#2c313a] transition-all"
-                title="Delete project"
-              >
-                <Trash2 size={14} />
-              </button>
+              {confirmDeleteId === project.id ? (
+                <div className="absolute top-2 right-2 flex items-center gap-1.5 bg-[#282c34] border border-red-800/50 rounded-lg p-1.5">
+                  <span className="text-xs text-red-400 px-1">Delete?</span>
+                  <button
+                    onClick={() => handleDelete(project.id)}
+                    className="px-2 py-0.5 text-xs rounded bg-red-600 text-white hover:bg-red-700 transition-colors"
+                  >
+                    Yes
+                  </button>
+                  <button
+                    onClick={() => setConfirmDeleteId(null)}
+                    className="px-2 py-0.5 text-xs rounded bg-[#3e4451] text-[#abb2bf] hover:bg-[#5c6370] transition-colors"
+                  >
+                    No
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => handleDelete(project.id)}
+                  className="absolute top-3 right-3 p-1.5 rounded opacity-0 group-hover:opacity-100 text-[#5c6370] hover:text-red-400 hover:bg-[#2c313a] transition-all"
+                  title="Delete project"
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
             </div>
           ))}
         </div>

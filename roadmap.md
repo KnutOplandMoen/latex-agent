@@ -32,25 +32,30 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 - `packages/latex-lang/` — placeholder for custom CM6 extensions
 
 **Editor (API-backed):**
-- CodeMirror 6 wrapped in a React component (mount-once pattern, `next/dynamic` with `ssr: false`)
+- CodeMirror 6 wrapped in a React component (mount-once pattern, `next/dynamic` with `ssr: false`, imperative handle for external control)
 - `codemirror-lang-latex` with auto-close tags, linting, tooltips, autocomplete, bracket matching
-- One Dark theme, JetBrains Mono font
+- One Dark theme, JetBrains Mono font (self-hosted via `next/font/google`)
 - Three-pane resizable layout (`react-resizable-panels`): file tree + outline | editor with tabs | PDF placeholder
-- Outline view parsing `\section` / `\subsection` hierarchy from document content
-- Command palette (`cmdk`) on Ctrl+K with file switching, toggle panels, symbol/operator insertion
-- Files loaded from Postgres via API, debounced auto-save (2s) on edit
-- Lazy file content loading — only fetches content when a file is opened
-- New file creation from the file tree
+- Outline view parsing `\section` / `\subsection` hierarchy — click to navigate to line
+- Command palette (`cmdk`) on Ctrl+K with file switching, toggle panels, symbol/operator insertion into editor
+- Files loaded from Postgres via API, debounced auto-save (2s) with retry on failure
+- Lazy file content loading with error state and retry UI
+- File creation and deletion from the file tree (with confirmation)
+- Error boundaries at root and project level
 
 **Backend:**
 - Fastify API with `fastify-type-provider-zod` for end-to-end typed routes
 - Project CRUD: `POST/GET /projects`, `GET/DELETE /projects/:id`
 - File CRUD: `GET/POST /projects/:id/files`, `GET/PUT/DELETE /files/:id`
 - Service layer pattern: routes → services → Drizzle, with project membership checks
-- Clerk JWT authentication with dev bypass (no credentials needed for local dev)
+- RBAC: viewers cannot create, edit, or delete files
+- Clerk JWT authentication with dev bypass (gated on `NODE_ENV !== 'production'`)
+- Auto user upsert on first authenticated request (no separate webhook needed for basic usage)
+- Configurable CORS origin via `CORS_ORIGIN` env var
+- Graceful DB pool shutdown on Fastify close
 
 **Dashboard:**
-- `/dashboard` page with project list, create project dialog, delete project
+- `/dashboard` page with project list, create project dialog, delete project (with confirmation)
 - `/project/[id]` page loads real project files and opens the editor
 - `/` redirects to `/dashboard`
 
@@ -64,12 +69,10 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 ### Known issues / next steps
 
 - No compile functionality — PDF pane is a placeholder (Phase 4)
-- Command palette symbol insertion doesn't actually insert into the editor yet (needs editor ref forwarding)
-- Clerk auth requires credentials from clerk.com — set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` to enable; without them, dev bypass is active
+- Clerk auth requires credentials from clerk.com — set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` to enable; without them, dev bypass is active (blocked in production via `NODE_ENV`)
 - Run `docker compose up` then `pnpm --filter @latex-ide/db db:migrate` then `pnpm --filter @latex-ide/db db:seed` to set up the database
-- No user sync from Clerk to the `users` table yet — in dev mode the seed script creates a `dev_user`; for production, add a Clerk webhook to sync users
-- File deletion is not exposed in the UI yet (API supports it)
-- No error boundaries in the editor page
+- Command palette "Compile Project" and "Find in Files" actions are stubs (Phase 4 / future)
+- `packages/latex-lang/` is a placeholder — custom CM6 extensions not yet implemented
 
 ---
 

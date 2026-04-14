@@ -13,6 +13,10 @@ export default fp(async (fastify) => {
     throw new Error('DATABASE_URL environment variable is required');
   }
 
-  const db = createDb(databaseUrl);
+  const { db, pool } = createDb(databaseUrl);
   fastify.decorate('db', db);
+
+  fastify.addHook('onClose', async () => {
+    await pool.end();
+  });
 });

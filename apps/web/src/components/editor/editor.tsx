@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, crosshairCursor, highlightSpecialChars } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
@@ -11,13 +11,21 @@ import { linter, lintKeymap } from '@codemirror/lint';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { latex, latexLinter } from 'codemirror-lang-latex';
 
+export interface EditorHandle {
+  insertText: (text: string) => void;
+  scrollToLine: (line: number) => void;
+}
+
 interface EditorProps {
   initialDoc?: string;
   onDocChange?: (doc: string) => void;
   extensions?: Extension[];
 }
 
-export function Editor({ initialDoc = '', onDocChange, extensions: extraExtensions = [] }: EditorProps) {
+export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
+  { initialDoc = '', onDocChange, extensions: extraExtensions = [] },
+  ref,
+) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onDocChangeRef = useRef(onDocChange);
@@ -82,6 +90,28 @@ export function Editor({ initialDoc = '', onDocChange, extensions: extraExtensio
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useImperativeHandle(ref, () => ({
+    insertText(text: string) {
+      const view = viewRef.current;
+      if (!view) return;
+      const { from, to } = view.state.selection.main;
+      view.dispatch({ changes: { from, to, insert: text } });
+      view.focus();
+    },
+    scrollToLine(line: number) {
+      const view = viewRef.current;
+      if (!view) return;
+      const lineCount = view.state.doc.lines;
+      const clampedLine = Math.max(1, Math.min(line, lineCount));
+      const lineInfo = view.state.doc.line(clampedLine);
+      view.dispatch({
+        selection: { anchor: lineInfo.from },
+        effects: EditorView.scrollIntoView(lineInfo.from, { y: 'center' }),
+      });
+      view.focus();
+    },
+  }));
+
   useEffect(() => {
     if (!hostRef.current) return;
 
@@ -96,4 +126,4 @@ export function Editor({ initialDoc = '', onDocChange, extensions: extraExtensio
   }, []);
 
   return <div ref={hostRef} className="h-full w-full" />;
-}
+});

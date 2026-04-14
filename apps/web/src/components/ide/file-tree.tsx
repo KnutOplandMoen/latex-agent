@@ -1,6 +1,6 @@
 'use client';
 
-import { FileText, FileCode, ChevronDown, ChevronRight, FolderOpen, FilePlus } from 'lucide-react';
+import { FileText, FileCode, ChevronDown, ChevronRight, FolderOpen, FilePlus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 interface FileEntry {
@@ -14,6 +14,7 @@ interface FileTreeProps {
   activeFileId: string | null;
   onFileSelect: (fileId: string) => void;
   onCreateFile?: (path: string) => void;
+  onDeleteFile?: (fileId: string) => void;
 }
 
 function getFileIcon(type: FileEntry['type']) {
@@ -27,10 +28,11 @@ function getFileIcon(type: FileEntry['type']) {
   }
 }
 
-export function FileTree({ files, activeFileId, onFileSelect, onCreateFile }: FileTreeProps) {
+export function FileTree({ files, activeFileId, onFileSelect, onCreateFile, onDeleteFile }: FileTreeProps) {
   const [expanded, setExpanded] = useState(true);
   const [creating, setCreating] = useState(false);
   const [newFileName, setNewFileName] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   function handleCreateSubmit() {
     const trimmed = newFileName.trim();
@@ -39,6 +41,16 @@ export function FileTree({ files, activeFileId, onFileSelect, onCreateFile }: Fi
     }
     setNewFileName('');
     setCreating(false);
+  }
+
+  function handleDeleteClick(fileId: string) {
+    if (confirmDeleteId === fileId) {
+      onDeleteFile?.(fileId);
+      setConfirmDeleteId(null);
+    } else {
+      setConfirmDeleteId(fileId);
+      setTimeout(() => setConfirmDeleteId((current) => current === fileId ? null : current), 3000);
+    }
   }
 
   return (
@@ -86,18 +98,38 @@ export function FileTree({ files, activeFileId, onFileSelect, onCreateFile }: Fi
               </div>
             )}
             {files.map((file) => (
-              <button
+              <div
                 key={file.id}
-                onClick={() => onFileSelect(file.id)}
-                className={`flex items-center gap-1.5 w-full px-2 py-1 text-left transition-colors ${
+                className={`group flex items-center w-full transition-colors ${
                   activeFileId === file.id
                     ? 'bg-[#2c313a] text-white'
                     : 'text-[#abb2bf] hover:bg-[#2c313a]'
                 }`}
               >
-                {getFileIcon(file.type)}
-                <span className="truncate">{file.name}</span>
-              </button>
+                <button
+                  onClick={() => onFileSelect(file.id)}
+                  className="flex items-center gap-1.5 flex-1 min-w-0 px-2 py-1 text-left"
+                >
+                  {getFileIcon(file.type)}
+                  <span className="truncate">{file.name}</span>
+                </button>
+                {onDeleteFile && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteClick(file.id);
+                    }}
+                    className={`p-1 mr-1 rounded transition-all shrink-0 ${
+                      confirmDeleteId === file.id
+                        ? 'opacity-100 text-red-400 bg-red-900/30'
+                        : 'opacity-0 group-hover:opacity-100 text-[#5c6370] hover:text-red-400'
+                    }`}
+                    title={confirmDeleteId === file.id ? 'Click again to confirm delete' : 'Delete file'}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         )}

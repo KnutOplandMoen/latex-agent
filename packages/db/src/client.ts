@@ -6,7 +6,9 @@ const { Pool } = pg;
 
 export function createDb(connectionString: string) {
   const pool = new Pool({ connectionString });
-  return drizzle(pool, { schema });
+  const db = drizzle(pool, { schema });
+  return { db, pool };
 }
 
-export type Database = ReturnType<typeof createDb>;
+export type DbInstance = ReturnType<typeof createDb>;
+export type Database = DbInstance['db'];

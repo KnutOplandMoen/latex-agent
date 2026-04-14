@@ -5,13 +5,13 @@ globs: packages/db/**/*.ts, apps/api/src/services/**
 
 # Database — Drizzle + PostgreSQL
 
-Single source of truth for schema lives in `packages/db/schema.ts`. Every service imports tables from there.
+Single source of truth for schema lives in `packages/db/src/schema.ts`. Every service imports tables from there.
 
 ## Schema layout
 
 ```ts
-// packages/db/schema.ts
-import { pgTable, uuid, text, timestamp, jsonb, bigserial, bytea, index, primaryKey } from 'drizzle-orm/pg-core';
+// packages/db/src/schema.ts
+import { pgTable, uuid, text, timestamp, bigserial, customType, index, primaryKey } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 export const users = pgTable('users', {
@@ -35,29 +35,33 @@ export const projectMembers = pgTable('project_members', {
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   role: text('role', { enum: ['owner', 'editor', 'viewer'] }).notNull(),
   addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
-}, (t) => ({
-  pk: primaryKey({ columns: [t.projectId, t.userId] }),
-  userIdx: index('project_members_user_idx').on(t.userId),
-}));
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.userId] }),
+  index('project_members_user_idx').on(t.userId),
+]);
 
+// Phase 2: content stored as text column for simplicity.
+// Phase 3 will migrate to Yjs as source of truth; content column becomes a cache/fallback.
 export const files = pgTable('files', {
   id: uuid('id').primaryKey().defaultRandom(),
   projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
   path: text('path').notNull(),
   type: text('type', { enum: ['tex', 'bib', 'image', 'other'] }).notNull(),
+  content: text('content'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-}, (t) => ({
-  projectPathIdx: index('files_project_path_idx').on(t.projectId, t.path),
-}));
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('files_project_path_idx').on(t.projectId, t.path),
+]);
 
 export const yjsUpdates = pgTable('yjs_updates', {
   id: bigserial('id', { mode: 'bigint' }).primaryKey(),
   documentName: text('document_name').notNull(),
-  update: bytea('update').notNull(),
+  update: bytea('update').notNull(), // bytea via customType
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-}, (t) => ({
-  docIdx: index('yjs_updates_doc_idx').on(t.documentName, t.id),
-}));
+}, (t) => [
+  index('yjs_updates_doc_idx').on(t.documentName, t.id),
+]);
 
 // Relations
 export const projectsRelations = relations(projects, ({ one, many }) => ({

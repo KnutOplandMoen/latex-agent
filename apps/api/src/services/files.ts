@@ -36,7 +36,8 @@ export function createFileService(db: Database) {
     },
 
     async create(projectId: string, input: CreateFileInputType, userId: string) {
-      await assertMembership(projectId, userId);
+      const member = await assertMembership(projectId, userId);
+      if (member.role === 'viewer') throw new ForbiddenError('Viewers cannot create files');
       const [file] = await db
         .insert(files)
         .values({

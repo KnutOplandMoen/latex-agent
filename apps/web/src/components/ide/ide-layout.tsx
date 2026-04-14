@@ -9,13 +9,14 @@ import {
   PanelResizeHandle,
 } from 'react-resizable-panels';
 import type { File } from '@latex-ide/shared-types';
+import type { EditorHandle } from '@/components/editor/editor';
 import { FileTree } from './file-tree';
 import { OutlineView } from './outline-view';
 import { TabBar } from './tab-bar';
 import { PdfPlaceholder } from './pdf-placeholder';
 import { CommandPalette } from '@/components/command-palette/command-palette';
 import { useApi } from '@/lib/use-api';
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Loader2, ArrowLeft } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Loader2, ArrowLeft, AlertTriangle } from 'lucide-react';
 
 const Editor = dynamic(
   () => import('@/components/editor/editor').then((mod) => mod.Editor),
@@ -36,23 +37,34 @@ interface IdeLayoutProps {
 }
 
 const SAVE_DEBOUNCE_MS = 2000;
+const SAVE_RETRY_DELAY_MS = 3000;
+const MAX_SAVE_RETRIES = 2;
 
 export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutProps) {
   const api = useApi();
+  const editorRef = useRef<EditorHandle | null>(null);
   const [files, setFiles] = useState(initialFiles);
   const [activeFileId, setActiveFileId] = useState<string | null>(
     initialFiles.find((f) => f.path === 'main.tex')?.id ?? initialFiles[0]?.id ?? null,
   );
   const [openFileIds, setOpenFileIds] = useState<string[]>(activeFileId ? [activeFileId] : []);
   const [fileContents, setFileContents] = useState<Record<string, string>>({});
+  const [fileLoadErrors, setFileLoadErrors] = useState<Record<string, string>>({});
   const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
   const [showLeftPanel, setShowLeftPanel] = useState(true);
   const [showRightPanel, setShowRightPanel] = useState(true);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved' | 'error'>('saved');
+  const [errorToast, setErrorToast] = useState<string | null>(null);
   const editorKeyRef = useRef(0);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSaveRef = useRef<{ fileId: string; content: string } | null>(null);
+  const saveRetryCountRef = useRef(0);
+
+  const showError = useCallback((message: string) => {
+    setErrorToast(message);
+    setTimeout(() => setErrorToast(null), 5000);
+  }, []);
 
   const fileById = useCallback(
     (id: string) => files.find((f) => f.id === id),
@@ -65,11 +77,16 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
     async (fileId: string) => {
       if (fileContents[fileId] !== undefined) return;
       setLoadingFileId(fileId);
+      setFileLoadErrors((prev) => {
+        const next = { ...prev };
+        delete next[fileId];
+        return next;
+      });
       try {
         const file = await api.files.get(fileId);
         setFileContents((prev) => ({ ...prev, [fileId]: file.content ?? '' }));
       } catch {
-        setFileContents((prev) => ({ ...prev, [fileId]: '' }));
+        setFileLoadErrors((prev) => ({ ...prev, [fileId]: 'Failed to load file. Check your connection and try again.' }));
       } finally {
         setLoadingFileId(null);
       }
@@ -78,10 +95,10 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
   );
 
   useEffect(() => {
-    if (activeFileId && fileContents[activeFileId] === undefined) {
+    if (activeFileId && fileContents[activeFileId] === undefined && !fileLoadErrors[activeFileId]) {
       loadFileContent(activeFileId);
     }
-  }, [activeFileId, fileContents, loadFileContent]);
+  }, [activeFileId, fileContents, fileLoadErrors, loadFileContent]);
 
   const flushSave = useCallback(async () => {
     const pending = pendingSaveRef.current;
@@ -91,15 +108,24 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
     try {
       await api.files.update(pending.fileId, pending.content);
       setSaveStatus('saved');
+      saveRetryCountRef.current = 0;
     } catch {
-      setSaveStatus('unsaved');
+      if (saveRetryCountRef.current < MAX_SAVE_RETRIES) {
+        saveRetryCountRef.current += 1;
+        pendingSaveRef.current = pending;
+        saveTimerRef.current = setTimeout(flushSave, SAVE_RETRY_DELAY_MS);
+        setSaveStatus('unsaved');
+      } else {
+        setSaveStatus('error');
+        saveRetryCountRef.current = 0;
+        showError('Failed to save. Your changes may be lost if you leave.');
+      }
     }
-  }, [api]);
+  }, [api, showError]);
 
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      // Flush on unmount
       if (pendingSaveRef.current) {
         const { fileId, content } = pendingSaveRef.current;
         api.files.update(fileId, content).catch(() => {});
@@ -139,6 +165,7 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
       if (!activeFileId) return;
       setFileContents((prev) => ({ ...prev, [activeFileId]: doc }));
       setSaveStatus('unsaved');
+      saveRetryCountRef.current = 0;
       pendingSaveRef.current = { fileId: activeFileId, content: doc };
 
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -149,23 +176,84 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
 
   const handleCreateFile = useCallback(
     async (path: string) => {
-      const ext = path.split('.').pop()?.toLowerCase();
-      const type = ext === 'tex' ? 'tex' : ext === 'bib' ? 'bib' : 'other';
-      const file = await api.files.create(projectId, { path, type: type as 'tex' | 'bib' | 'other' });
-      setFiles((prev) => [...prev, { id: file.id, projectId: file.projectId, path: file.path, type: file.type, createdAt: file.createdAt, updatedAt: file.updatedAt }]);
-      setFileContents((prev) => ({ ...prev, [file.id]: file.content ?? '' }));
-      handleFileSelect(file.id);
+      try {
+        const ext = path.split('.').pop()?.toLowerCase();
+        const type = ext === 'tex' ? 'tex' : ext === 'bib' ? 'bib' : 'other';
+        const file = await api.files.create(projectId, { path, type: type as 'tex' | 'bib' | 'other' });
+        setFiles((prev) => [...prev, { id: file.id, projectId: file.projectId, path: file.path, type: file.type, createdAt: file.createdAt, updatedAt: file.updatedAt }]);
+        setFileContents((prev) => ({ ...prev, [file.id]: file.content ?? '' }));
+        handleFileSelect(file.id);
+      } catch {
+        showError('Failed to create file.');
+      }
     },
-    [api, projectId, handleFileSelect],
+    [api, projectId, handleFileSelect, showError],
   );
+
+  const handleDeleteFile = useCallback(
+    async (fileId: string) => {
+      try {
+        await api.files.remove(fileId);
+        setFiles((prev) => prev.filter((f) => f.id !== fileId));
+        setFileContents((prev) => {
+          const next = { ...prev };
+          delete next[fileId];
+          return next;
+        });
+        setOpenFileIds((prev) => {
+          const next = prev.filter((f) => f !== fileId);
+          if (activeFileId === fileId) {
+            const newActive = next[0] ?? null;
+            setActiveFileId(newActive);
+            editorKeyRef.current += 1;
+          }
+          return next;
+        });
+      } catch {
+        showError('Failed to delete file.');
+      }
+    },
+    [api, activeFileId, showError],
+  );
+
+  const handleInsertText = useCallback((text: string) => {
+    editorRef.current?.insertText(text);
+  }, []);
+
+  const handleOutlineNavigate = useCallback((line: number) => {
+    editorRef.current?.scrollToLine(line);
+  }, []);
+
+  const handleRetryLoad = useCallback(() => {
+    if (!activeFileId) return;
+    setFileLoadErrors((prev) => {
+      const next = { ...prev };
+      delete next[activeFileId];
+      return next;
+    });
+    setFileContents((prev) => {
+      const next = { ...prev };
+      delete next[activeFileId];
+      return next;
+    });
+  }, [activeFileId]);
 
   const currentContent = activeFileId ? (fileContents[activeFileId] ?? '') : '';
   const isLoadingContent = activeFileId === loadingFileId;
+  const activeFileLoadError = activeFileId ? fileLoadErrors[activeFileId] : undefined;
 
   const fileEntries = files.map((f) => ({ id: f.id, name: f.path, type: f.type as 'tex' | 'bib' | 'image' | 'other' }));
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[#282c34]">
+    <div className="ide-root h-screen w-screen flex flex-col bg-[#282c34]">
+      {/* Error toast */}
+      {errorToast && (
+        <div className="absolute top-12 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-red-900/90 border border-red-700 text-red-200 text-sm flex items-center gap-2 shadow-lg">
+          <AlertTriangle size={14} />
+          {errorToast}
+        </div>
+      )}
+
       {/* Top bar */}
       <div className="flex items-center justify-between px-3 py-1 bg-[#21252b] border-b border-[#3e4451] text-sm">
         <div className="flex items-center gap-2">
@@ -187,8 +275,16 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
         </div>
 
         <div className="flex items-center gap-2">
-          <span className={`text-xs ${saveStatus === 'saved' ? 'text-[#5c6370]' : saveStatus === 'saving' ? 'text-yellow-400' : 'text-orange-400'}`}>
-            {saveStatus === 'saved' ? 'Saved' : saveStatus === 'saving' ? 'Saving...' : 'Unsaved'}
+          <span className={`text-xs ${
+            saveStatus === 'saved' ? 'text-[#5c6370]' :
+            saveStatus === 'saving' ? 'text-yellow-400' :
+            saveStatus === 'error' ? 'text-red-400' :
+            'text-orange-400'
+          }`}>
+            {saveStatus === 'saved' ? 'Saved' :
+             saveStatus === 'saving' ? 'Saving...' :
+             saveStatus === 'error' ? 'Save failed' :
+             'Unsaved'}
           </span>
           <button
             onClick={() => setCommandPaletteOpen(true)}
@@ -220,10 +316,11 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
                       activeFileId={activeFileId}
                       onFileSelect={handleFileSelect}
                       onCreateFile={handleCreateFile}
+                      onDeleteFile={handleDeleteFile}
                     />
                   </div>
                   <div className="border-t border-[#3e4451] h-[40%] min-h-[120px] overflow-hidden">
-                    <OutlineView content={currentContent} />
+                    <OutlineView content={currentContent} onNavigate={handleOutlineNavigate} />
                   </div>
                 </div>
               </Panel>
@@ -254,8 +351,20 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
                   <div className="h-full flex items-center justify-center bg-[#282c34] text-[#5c6370]">
                     <Loader2 size={24} className="animate-spin" />
                   </div>
+                ) : activeFileLoadError ? (
+                  <div className="h-full flex flex-col items-center justify-center bg-[#282c34] gap-3">
+                    <AlertTriangle size={32} className="text-red-400" />
+                    <p className="text-red-400 text-sm">{activeFileLoadError}</p>
+                    <button
+                      onClick={handleRetryLoad}
+                      className="px-3 py-1.5 text-sm rounded bg-[#2c313a] text-[#abb2bf] hover:bg-[#3e4451] transition-colors"
+                    >
+                      Retry
+                    </button>
+                  </div>
                 ) : (
                   <Editor
+                    ref={editorRef}
                     key={`${activeFileId}-${editorKeyRef.current}`}
                     initialDoc={currentContent}
                     onDocChange={handleDocChange}
@@ -300,6 +409,7 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
         }}
         onToggleLeftPanel={() => setShowLeftPanel((p) => !p)}
         onToggleRightPanel={() => setShowRightPanel((p) => !p)}
+        onInsertText={handleInsertText}
       />
     </div>
   );

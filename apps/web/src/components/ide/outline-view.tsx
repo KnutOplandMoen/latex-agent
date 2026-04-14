@@ -31,7 +31,6 @@ function parseOutline(content: string): OutlineEntry[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     for (const [cmd, level] of Object.entries(SECTION_COMMANDS)) {
-      const starredCmd = cmd + '*';
       const idx = line.indexOf(cmd);
       if (idx === -1) continue;
 

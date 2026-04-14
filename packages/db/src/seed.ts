@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { createDb } from './client.js';
 import { users, projects, projectMembers, files } from './schema.js';
 
@@ -7,7 +8,7 @@ if (!DATABASE_URL) {
   process.exit(1);
 }
 
-const db = createDb(DATABASE_URL);
+const { db, pool } = createDb(DATABASE_URL);
 
 const SAMPLE_LATEX = `\\documentclass[12pt]{article}
 
@@ -107,25 +108,30 @@ const SAMPLE_BIB = `@article{knuth1984,
 async function seed() {
   console.log('Seeding database...');
 
-  const [testUser] = await db
+  await db
     .insert(users)
     .values({
       id: 'dev_user',
       email: 'dev@localhost',
       name: 'Dev User',
     })
-    .onConflictDoNothing()
-    .returning();
+    .onConflictDoNothing({ target: users.id });
 
-  if (!testUser) {
-    console.log('Test user already exists, skipping seed.');
+  console.log('User "dev_user" ensured.');
+
+  const existingProjects = await db.query.projects.findMany({
+    where: eq(projects.ownerId, 'dev_user'),
+  });
+
+  if (existingProjects.length > 0) {
+    console.log(`Sample project already exists ("${existingProjects[0]!.name}"), skipping project seed.`);
     return;
   }
 
   const [project] = await db
     .insert(projects)
     .values({
-      ownerId: testUser.id,
+      ownerId: 'dev_user',
       name: 'Hello World',
       rootFile: 'main.tex',
     })
@@ -133,7 +139,7 @@ async function seed() {
 
   await db.insert(projectMembers).values({
     projectId: project!.id,
-    userId: testUser.id,
+    userId: 'dev_user',
     role: 'owner',
   });
 
@@ -152,12 +158,13 @@ async function seed() {
     },
   ]);
 
-  console.log(`Seeded: user "${testUser.email}", project "${project!.name}"`);
+  console.log(`Seeded: project "${project!.name}" with 2 files.`);
 }
 
 seed()
+  .then(() => pool.end())
   .then(() => process.exit(0))
   .catch((err) => {
     console.error('Seed failed:', err);
-    process.exit(1);
+    pool.end().finally(() => process.exit(1));
   });

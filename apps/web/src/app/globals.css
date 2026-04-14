@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 
 :root {
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+  --font-mono-fallback: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
     'Liberation Mono', monospace;
 }
 
@@ -9,11 +9,15 @@ html,
 body {
   height: 100%;
   margin: 0;
+}
+
+/* IDE pages handle their own overflow via h-screen w-screen */
+.ide-root {
   overflow: hidden;
 }
 
 body {
-  font-family: var(--font-mono), monospace;
+  font-family: var(--font-mono), var(--font-mono-fallback);
 }
 
 /* Ensure CodeMirror fills its container */

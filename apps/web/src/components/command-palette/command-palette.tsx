@@ -21,6 +21,7 @@ interface CommandPaletteProps {
   onFileSelect: (fileName: string) => void;
   onToggleLeftPanel: () => void;
   onToggleRightPanel: () => void;
+  onInsertText?: (text: string) => void;
 }
 
 const GREEK_SYMBOLS = [
@@ -66,6 +67,7 @@ export function CommandPalette({
   onFileSelect,
   onToggleLeftPanel,
   onToggleRightPanel,
+  onInsertText,
 }: CommandPaletteProps) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -168,6 +170,7 @@ export function CommandPalette({
                 key={sym.label}
                 value={`insert symbol ${sym.label}`}
                 onSelect={() => {
+                  onInsertText?.(sym.insert);
                   onOpenChange(false);
                 }}
                 className="flex items-center gap-2 px-2 py-1.5 rounded text-sm text-[#abb2bf] cursor-pointer data-[selected=true]:bg-[#2c313a]"
@@ -184,6 +187,7 @@ export function CommandPalette({
                 key={op.label}
                 value={`insert math ${op.label}`}
                 onSelect={() => {
+                  onInsertText?.(op.insert);
                   onOpenChange(false);
                 }}
                 className="flex items-center gap-2 px-2 py-1.5 rounded text-sm text-[#abb2bf] cursor-pointer data-[selected=true]:bg-[#2c313a]"

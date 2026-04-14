@@ -13,21 +13,24 @@ Single source of truth for HTTP routes. The frontend, the collab server, and the
 apps/api/src/
 ├── server.ts             Fastify instance, plugin registration
 ├── plugins/
-│   ├── auth.ts           Clerk JWT verification
-│   ├── db.ts             Drizzle injection
-│   ├── error-handler.ts  Centralized error mapping
-│   └── zod.ts            fastify-type-provider-zod setup
+│   ├── auth.ts           Clerk JWT verification + dev bypass + user upsert
+│   ├── db.ts             Drizzle injection + pool lifecycle
+│   └── error-handler.ts  Centralized error mapping
 ├── routes/
 │   ├── projects/
 │   │   ├── index.ts      GET / POST /projects
-│   │   ├── [id].ts       GET / PATCH / DELETE /projects/:id
-│   │   ├── files.ts      File CRUD
-│   │   └── compile.ts    POST /projects/:id/compile
-│   ├── agent.ts          Agent run endpoints (proxy to Python)
-│   └── webhooks.ts       Clerk webhooks
-├── services/             Pure business logic, no HTTP knowledge
+│   │   ├── _id.ts        GET / DELETE /projects/:id
+│   │   └── files.ts      GET / POST /projects/:id/files
+│   └── files/
+│       └── _id.ts        GET / PUT / DELETE /files/:id
+├── services/
+│   ├── projects.ts       Project CRUD + membership checks
+│   └── files.ts          File CRUD + RBAC (viewers cannot create/edit/delete)
 └── lib/
+    └── errors.ts         AppError, NotFoundError, ForbiddenError, etc.
 ```
+
+> **Planned for future phases:** `routes/projects/compile.ts` (Phase 4), `routes/agent.ts` (Phase 5), `routes/webhooks.ts` (Clerk user sync).
 
 ## Route definition pattern
 

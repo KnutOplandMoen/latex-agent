@@ -28,7 +28,10 @@ async function start() {
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
 
-  await fastify.register(cors, { origin: true });
+  const corsOrigin = process.env.CORS_ORIGIN ?? 'http://localhost:3000';
+  await fastify.register(cors, {
+    origin: corsOrigin === '*' ? true : corsOrigin.split(','),
+  });
   await fastify.register(errorHandler);
   await fastify.register(dbPlugin);
   await fastify.register(auth);
