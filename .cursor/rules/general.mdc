@@ -53,4 +53,13 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 These guidelines are working if: fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
-5. Always read documentation, and update / add documentation that clarifies what you have made so that another engenieer can understand your thoughts.
+5. Always read documentation, and update / add documentation that clarifies what you have made so that another engineer can understand your thoughts.
+
+6. Keep the Roadmap Up to Date
+After completing a phase, feature, or meaningful chunk of work, update `roadmap.md`:
+- Mark completed phases/items as done in the progress table.
+- Update the "What exists today" section to reflect new capabilities.
+- Move resolved items out of "Known issues / next steps" and add new ones.
+- If a phase is partially done, note what's finished and what remains.
+
+The roadmap is the single source of truth for project status. If it's stale, no one (including the AI) knows where the project stands.
