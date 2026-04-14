@@ -13,7 +13,7 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 | Phase 0 — Foundation | **DONE** | Monorepo, Docker Compose, DB schema, API skeleton, shared types |
 | Phase 1 — The editor | **DONE** | CodeMirror 6 with LaTeX support, IDE layout, command palette, outline view |
 | Phase 2 — Backend, persistence, projects | **DONE** | Auth (Clerk + dev bypass), project CRUD, file persistence via Postgres, dashboard, API-backed editor |
-| Phase 3 — Realtime collaboration | Not started | Yjs + Hocuspocus + awareness |
+| Phase 3 — Realtime collaboration | **DONE** | Yjs + Hocuspocus + awareness, offline support, presence UI |
 | Phase 4 — LaTeX compilation | Not started | TeX Live Docker, compile worker, PDF preview |
 | Phase 5 — AI agent layer | Not started | Python FastAPI agent, tools, chat UI |
 | Phase 6 — History, diff, polish | Not started | Version history, comments, sharing, import/export |
@@ -24,22 +24,26 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 **Monorepo structure (pnpm workspaces + Turborepo):**
 - `apps/web/` — Next.js 15 + React 19 + Tailwind CSS 4 + Clerk auth
 - `apps/api/` — Fastify with Clerk JWT auth (dev bypass), Drizzle DB plugin, project + file CRUD routes
-- `apps/collab/` — placeholder
+- `apps/collab/` — Hocuspocus Yjs WebSocket server with Clerk auth, DB persistence, viewer read-only
 - `apps/compile/` — placeholder
 - `apps/agent/` — Python placeholder with `pyproject.toml`
 - `packages/shared-types/` — Zod schemas for User, Project, ProjectMember, File (with content), UpdateFile
 - `packages/db/` — Drizzle ORM schema (users, projects, projectMembers, files with content, yjsUpdates), migrations, client, seed script
 - `packages/latex-lang/` — placeholder for custom CM6 extensions
 
-**Editor (API-backed):**
+**Editor (Yjs-backed, realtime collaborative):**
 - CodeMirror 6 wrapped in a React component (mount-once pattern, `next/dynamic` with `ssr: false`, imperative handle for external control)
 - `codemirror-lang-latex` with auto-close tags, linting, tooltips, autocomplete, bracket matching
+- `y-codemirror.next` integration — Yjs is the source of truth for document content
+- Realtime collaboration: multiple users edit the same file simultaneously via Hocuspocus WebSocket
+- Awareness: remote cursors with user names and colors, presence indicator in the top bar
+- Offline support: `y-indexeddb` persists Y.Doc locally, edits sync automatically on reconnect
+- Offline banner shown when WebSocket is disconnected
+- Sync status indicator (Synced / Syncing / Offline) replaces the old save status
 - One Dark theme, JetBrains Mono font (self-hosted via `next/font/google`)
 - Three-pane resizable layout (`react-resizable-panels`): file tree + outline | editor with tabs | PDF placeholder
 - Outline view parsing `\section` / `\subsection` hierarchy — click to navigate to line
 - Command palette (`cmdk`) on Ctrl+K with file switching, toggle panels, symbol/operator insertion into editor
-- Files loaded from Postgres via API, debounced auto-save (2s) with retry on failure
-- Lazy file content loading with error state and retry UI
 - File creation and deletion from the file tree (with confirmation)
 - Error boundaries at root and project level
 
@@ -73,6 +77,9 @@ A detailed, phase-by-phase plan for building a collaborative web-based LaTeX IDE
 - Run `docker compose up` then `pnpm --filter @latex-ide/db db:migrate` then `pnpm --filter @latex-ide/db db:seed` to set up the database
 - Command palette "Compile Project" and "Find in Files" actions are stubs (Phase 4 / future)
 - `packages/latex-lang/` is a placeholder — custom CM6 extensions not yet implemented
+- No `yjs_updates` compaction job yet — rows accumulate indefinitely (future optimization)
+- File tree is REST-based, not synced via Yjs (a project-level Y.Map could be added later)
+- Viewer read-only is enforced server-side (Hocuspocus `connection.readOnly`) but the editor UI does not visually indicate read-only mode
 
 ---
 
@@ -271,7 +278,7 @@ For the **compiled PDFs and uploaded images**, use Cloudflare R2 from day one �
 
 ---
 
-## Phase 3 — Realtime collaboration (Weeks 6–8) ⬜ UP NEXT
+## Phase 3 — Realtime collaboration (Weeks 6–8) ✅ DONE
 
 This is the hardest part. Take your time.
 

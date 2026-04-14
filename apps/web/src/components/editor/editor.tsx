@@ -10,36 +10,97 @@ import { bracketMatching, indentOnInput, foldGutter, foldKeymap } from '@codemir
 import { linter, lintKeymap } from '@codemirror/lint';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { latex, latexLinter } from 'codemirror-lang-latex';
+import type * as Y from 'yjs';
 
 export interface EditorHandle {
   insertText: (text: string) => void;
   scrollToLine: (line: number) => void;
 }
 
-interface EditorProps {
-  initialDoc?: string;
-  onDocChange?: (doc: string) => void;
+interface BaseEditorProps {
   extensions?: Extension[];
 }
 
+interface PlainTextEditorProps extends BaseEditorProps {
+  mode?: 'plain';
+  initialDoc?: string;
+  onDocChange?: (doc: string) => void;
+  ytext?: never;
+  awareness?: never;
+}
+
+interface CollabEditorProps extends BaseEditorProps {
+  mode: 'collab';
+  ytext: Y.Text;
+  /** Awareness instance from the Hocuspocus provider — typed as unknown since yCollab accepts any */
+  awareness: unknown;
+  initialDoc?: never;
+  onDocChange?: never;
+}
+
+type EditorProps = PlainTextEditorProps | CollabEditorProps;
+
+const CURSOR_STYLES: Record<string, string> = {
+  '.cm-ySelectionCaret': `
+    position: relative;
+    border-left: 2px solid;
+    margin-left: -1px;
+    margin-right: -1px;
+  `,
+  '.cm-ySelectionCaretDot': `
+    display: none;
+  `,
+  '.cm-ySelectionInfo': `
+    position: absolute;
+    top: -1.4em;
+    left: -1px;
+    font-size: 0.7em;
+    font-family: var(--font-mono);
+    font-style: normal;
+    font-weight: 600;
+    line-height: normal;
+    user-select: none;
+    padding: 1px 4px;
+    border-radius: 3px 3px 3px 0;
+    white-space: nowrap;
+    opacity: 1;
+    transition: opacity 0.3s ease-in-out;
+    pointer-events: none;
+    z-index: 10;
+  `,
+  '.cm-ySelection': `
+    opacity: 0.3;
+  `,
+  '.cm-yLineSelection': `
+    opacity: 0.15;
+  `,
+};
+
 export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
-  { initialDoc = '', onDocChange, extensions: extraExtensions = [] },
+  props,
   ref,
 ) {
+  const {
+    extensions: extraExtensions = [],
+  } = props;
+
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const onDocChangeRef = useRef(onDocChange);
+  const onDocChangeRef = useRef(
+    props.mode === 'collab' ? undefined : props.onDocChange,
+  );
 
   useEffect(() => {
-    onDocChangeRef.current = onDocChange;
-  }, [onDocChange]);
+    if (props.mode !== 'collab') {
+      onDocChangeRef.current = props.onDocChange;
+    }
+  }, [props.mode, props.mode === 'collab' ? undefined : props.onDocChange]);
 
   const getExtensions = useCallback((): Extension[] => {
-    return [
+    const base: Extension[] = [
       lineNumbers(),
       highlightActiveLineGutter(),
       highlightSpecialChars(),
-      history(),
       foldGutter(),
       drawSelection(),
       rectangularSelection(),
@@ -55,7 +116,6 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         ...closeBracketsKeymap,
         ...defaultKeymap,
         ...searchKeymap,
-        ...historyKeymap,
         ...foldKeymap,
         ...completionKeymap,
         ...lintKeymap,
@@ -72,21 +132,35 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       linter(latexLinter()),
       oneDark,
 
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          onDocChangeRef.current?.(update.state.doc.toString());
-        }
-      }),
-
       EditorView.theme({
         '&': { height: '100%' },
         '.cm-scroller': { overflow: 'auto', fontFamily: 'var(--font-mono)' },
         '.cm-content': { padding: '8px 0' },
         '.cm-gutters': { borderRight: '1px solid #3e4451' },
+        ...CURSOR_STYLES,
       }),
-
-      ...extraExtensions,
     ];
+
+    if (props.mode === 'collab') {
+      // yCollab handles undo/redo via Y.UndoManager — no need for CM history()
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { yCollab } = require('y-codemirror.next') as typeof import('y-codemirror.next');
+      base.push(yCollab(props.ytext, props.awareness));
+    } else {
+      base.push(
+        history(),
+        keymap.of([...historyKeymap]),
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged) {
+            onDocChangeRef.current?.(update.state.doc.toString());
+          }
+        }),
+      );
+    }
+
+    base.push(...extraExtensions);
+
+    return base;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -115,10 +189,17 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   useEffect(() => {
     if (!hostRef.current) return;
 
-    const state = EditorState.create({
-      doc: initialDoc,
+    const stateConfig: Parameters<typeof EditorState.create>[0] = {
       extensions: getExtensions(),
-    });
+    };
+
+    // In plain-text mode, set initial doc content.
+    // In collab mode, yCollab syncs the doc from the Y.Text.
+    if (props.mode !== 'collab') {
+      stateConfig.doc = props.initialDoc ?? '';
+    }
+
+    const state = EditorState.create(stateConfig);
 
     viewRef.current = new EditorView({ state, parent: hostRef.current });
     return () => viewRef.current?.destroy();
