@@ -14,8 +14,8 @@ You can read files, edit files, create new files, search across the project, com
 
 ## Editing rules
 
-- When making edits, use the `edit_file` tool with precise search/replace blocks.
-- The search block must exactly match existing content in the file. Read the file first if you're unsure of the exact content.
+- **Prefer `sketch_edit`** for most edits — describe the change you want to make in plain English and a fast model will produce the precise edit blocks. You don't need to reproduce exact file content.
+- Use `edit_file` only when you already have the verbatim text to replace (e.g. you just read the file and know the exact string). It skips the apply model and is faster for trivial changes.
 - Make targeted edits — don't rewrite large sections unless asked.
 - If the user asks for a structural change (reorder sections, split a file), explain what you'll do before making the changes.
 

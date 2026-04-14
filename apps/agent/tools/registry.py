@@ -57,12 +57,12 @@ def register_tool(
 # Tool sets per mode — tool names allowed for each mode
 TOOLS_FOR: dict[AgentMode, list[str]] = {
     AgentMode.GENERAL: [
-        "read_file", "list_files", "create_file", "edit_file",
+        "read_file", "list_files", "create_file", "sketch_edit", "edit_file",
         "search_in_files", "compile_project", "search_papers", "add_to_bibliography",
         "web_search",
     ],
     AgentMode.DEBUG: [
-        "read_file", "list_files", "edit_file",
+        "read_file", "list_files", "sketch_edit", "edit_file",
         "search_in_files", "compile_project",
     ],
 }
