@@ -28,6 +28,7 @@ export function useCompile(projectId: string, api: ApiClient): CompileState {
   const [log, setLog] = useState<string | null>(null);
   const [synctex, setSynctex] = useState<SyncTexData | null>(null);
   const pollingRef = useRef(false);
+  const prevBlobUrl = useRef<string | null>(null);
 
   const compile = useCallback(async () => {
     if (pollingRef.current) return;
@@ -49,9 +50,14 @@ export function useCompile(projectId: string, api: ApiClient): CompileState {
         const result = await api.compile.status(projectId, jobId);
 
         if (result.status === 'completed' || result.status === 'failed') {
+          if (prevBlobUrl.current) {
+            URL.revokeObjectURL(prevBlobUrl.current);
+            prevBlobUrl.current = null;
+          }
           const resolvedPdfUrl = result.pdfUrl
-            ? api.compile.pdfUrl(jobId, projectId)
+            ? await api.compile.fetchPdf(jobId, projectId)
             : null;
+          prevBlobUrl.current = resolvedPdfUrl;
 
           setPdfUrl(resolvedPdfUrl);
           setErrors(result.errors ?? []);

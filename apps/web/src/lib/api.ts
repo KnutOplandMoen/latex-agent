@@ -100,8 +100,15 @@ export function createApiClient(getToken: GetToken) {
       status: (projectId: string, jobId: string) =>
         request<CompileResult>(`/projects/${projectId}/compile/${jobId}`, getToken),
 
-      pdfUrl: (jobId: string, projectId: string) =>
-        `${BASE_URL}/compiles/${jobId}/output.pdf?projectId=${projectId}`,
+      fetchPdf: async (jobId: string, projectId: string): Promise<string> => {
+        const token = await getToken();
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await fetch(`${BASE_URL}/compiles/${jobId}/output.pdf?projectId=${projectId}`, { headers });
+        if (!res.ok) throw new ApiError(res.status, null);
+        const blob = await res.blob();
+        return URL.createObjectURL(blob);
+      },
     },
 
     agentSession: {

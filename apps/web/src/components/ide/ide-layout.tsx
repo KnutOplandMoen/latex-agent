@@ -70,6 +70,8 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
   const { compile, phase, pdfUrl, errors: compileErrors, warnings: compileWarnings, log: compileLog, synctex, isCompiling } =
     useCompile(projectId, api);
 
+  const canCompile = isConnected && isSynced && !isCompiling;
+
   // Observe ytext to feed the outline view
   useEffect(() => {
     if (!ytext) {
@@ -182,7 +184,7 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
         e.preventDefault();
-        compile();
+        if (canCompile) compile();
       }
       // Ctrl+Shift+Enter: forward SyncTeX (source -> PDF)
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
@@ -195,7 +197,7 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [compile, activeFile]);
+  }, [compile, activeFile, canCompile]);
 
   // Auto-show log panel when compile has errors
   useEffect(() => {
@@ -325,9 +327,15 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
           </span>
           <button
             onClick={compile}
-            disabled={isCompiling}
+            disabled={!canCompile}
             className="flex items-center gap-1 px-2 py-0.5 text-xs rounded bg-green-700 hover:bg-green-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            title="Compile (Ctrl+Enter)"
+            title={
+              !isConnected
+                ? 'Cannot compile while offline'
+                : !isSynced
+                  ? 'Waiting for editor to sync...'
+                  : 'Compile (Ctrl+Enter)'
+            }
           >
             {isCompiling ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
             {isCompiling ? 'Compiling...' : 'Compile'}
@@ -543,7 +551,7 @@ export function IdeLayout({ projectId, projectName, initialFiles }: IdeLayoutPro
         onToggleLeftPanel={() => setShowLeftPanel((p) => !p)}
         onToggleRightPanel={() => setShowRightPanel((p) => !p)}
         onInsertText={handleInsertText}
-        onCompile={compile}
+        onCompile={canCompile ? compile : undefined}
         onOpenChat={() => {
           if (!showRightPanel) setShowRightPanel(true);
           setRightTab('chat');

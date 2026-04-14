@@ -48,8 +48,10 @@ async def agent_run(body: AgentRunRequest, request: Request) -> EventSourceRespo
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     # Authorise — check project membership
+    logger.info("Checking membership: user_id=%r project_id=%r", user.id, body.project_id)
     role = await check_membership(body.project_id, user.id)
     if role is None:
+        logger.warning("Membership not found: user_id=%r project_id=%r", user.id, body.project_id)
         raise HTTPException(status_code=403, detail="Not a project member")
     if role == "viewer":
         raise HTTPException(status_code=403, detail="Viewers cannot use the agent")

@@ -80,6 +80,7 @@ export function useCollabEditor(
       },
       onDisconnect() {
         setIsConnected(false);
+        setIsSynced(false);
       },
       onSynced() {
         setIsSynced(true);
