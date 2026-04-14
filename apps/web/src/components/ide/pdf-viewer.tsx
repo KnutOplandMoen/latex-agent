@@ -91,11 +91,12 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
       setError(null);
 
       try {
+        // pdfjs-dist 5.x + Next webpack dev: "Object.defineProperty called on non-object" during import
+        // (webpack eval-source-map; see mozilla/pdf.js#20478, vercel/next.js#89177). Use `next dev --turbo`.
+        // Fallbacks if you must use webpack dev: pin an older pdfjs-dist or upgrade Next when its bundled webpack includes the fix.
+        // Worker must match installed pdfjs-dist — copied by scripts/copy-pdf-worker.mjs (package postinstall).
         const pdfjsLib = await import('pdfjs-dist');
-        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-          'pdfjs-dist/build/pdf.worker.mjs',
-          import.meta.url,
-        ).toString();
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.mjs';
 
         const doc = await pdfjsLib.getDocument(pdfUrl!).promise;
         if (cancelled) {
@@ -103,16 +104,26 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
           return;
         }
 
-        pdfDocRef.current = doc;
-        setPageCount(doc.numPages);
-
+        // Collect all page dimensions before setting state so that pageCount,
+        // pageDimensions, and loading=false all batch into a single render.
+        // If pageCount is set first (before the getPage awaits), the rendering
+        // effect fires while loading=true and no canvases exist yet, causing
+        // blank pages until the user zooms.
         const dims: PageDimensions[] = [];
         for (let i = 1; i <= doc.numPages; i++) {
           const page = await doc.getPage(i);
           const viewport = page.getViewport({ scale: 1 });
           dims.push({ width: viewport.width, height: viewport.height });
         }
-        if (!cancelled) setPageDimensions(dims);
+
+        if (cancelled) {
+          doc.destroy();
+          return;
+        }
+
+        pdfDocRef.current = doc;
+        setPageCount(doc.numPages);
+        setPageDimensions(dims);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Failed to load PDF');

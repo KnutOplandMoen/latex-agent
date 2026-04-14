@@ -112,13 +112,22 @@ export function useCollabEditor(
 
     hocuspocus.awareness?.on('change', updateUsers);
 
-    const text = ydoc.getText('content');
-    setYtext(text);
-    setProvider(hocuspocus);
     setIsSynced(false);
     setIsConnected(false);
 
+    // Wait for IndexedDB to load persisted content before mounting the editor.
+    // Without this, the editor mounts with an empty Y.Text and yCollab misses
+    // the IDB update, leaving the editor blank even though content exists.
+    let destroyed = false;
+    idb.whenSynced.then(() => {
+      if (!destroyed) {
+        setYtext(ydoc.getText('content'));
+        setProvider(hocuspocus);
+      }
+    });
+
     return () => {
+      destroyed = true;
       hocuspocus.awareness?.off('change', updateUsers);
       hocuspocus.destroy();
       idb.destroy();

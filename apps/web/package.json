@@ -3,7 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3000",
+    "postinstall": "node ./scripts/copy-pdf-worker.mjs",
+    "sync-pdf-worker": "node ./scripts/copy-pdf-worker.mjs",
+    "dev": "next dev --port 3000 --turbo",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

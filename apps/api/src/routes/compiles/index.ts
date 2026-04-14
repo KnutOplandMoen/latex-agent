@@ -1,10 +1,15 @@
 import { createReadStream } from 'fs';
 import { access } from 'fs/promises';
-import { join } from 'path';
+import { join, resolve, isAbsolute, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
-const COMPILE_OUTPUT_DIR = process.env.COMPILE_OUTPUT_DIR ?? './compile-output';
+// Resolve compile output dir relative to the monorepo root so it works regardless of CWD.
+// __dirname here = apps/api/src/routes/compiles/ → five levels up = monorepo root
+const MONOREPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
+const rawDir = process.env.COMPILE_OUTPUT_DIR ?? 'apps/compile/compile-output';
+const COMPILE_OUTPUT_DIR = isAbsolute(rawDir) ? rawDir : resolve(MONOREPO_ROOT, rawDir);
 
 const compilesRoutes: FastifyPluginAsyncZod = async (fastify) => {
   fastify.get('/:jobId/output.pdf', {
